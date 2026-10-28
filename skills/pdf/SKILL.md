@@ -5,13 +5,14 @@ description: Read the text of a PDF the user shared or that sits in the workspac
 
 # Reading a PDF
 
-Run liteparse in read-only bash. It is installed with Shrok and works offline. Never use OCR, and never run it through `npx`, which downloads code. Bash always enforces a 30-second deadline and a 256 KiB total output budget, without saving full output to disk. Do not retry a document that hits either budget.
+Run the bundled liteparse in read-only bash, always with this command:
 
 ```
-readonly MAX_PDF_PAGES=20
-lit parse <path to the pdf> --no-ocr --max-pages "$MAX_PDF_PAGES" -q
+lit parse <path to the pdf> --no-ocr --max-pages 20 -q
 ```
 
 - Add `--format markdown` when headings and tables matter.
-- Keep `MAX_PDF_PAGES` at 20 on every parse, and say that you read at most the first 20 pages. Do not use batch parsing, screenshots, image extraction, or output files.
-- If the output is empty or garbled, the PDF is probably a scan. Tell the user that it has no text you can read, rather than guessing what it says.
+- Tell the user you read at most the first 20 pages.
+- Never run it through `npx`, which downloads code. Never use OCR, batch parsing, screenshots, image extraction or output files.
+- Bash stops after 30 seconds or 256 KiB of output. Don't retry a PDF that hits either limit.
+- Empty or garbled output means the PDF is probably a scan. Tell the user it has no text you can read, and don't guess what it says.

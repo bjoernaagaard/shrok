@@ -20,15 +20,10 @@ Shrok logs to `$(brew --prefix)/var/log/shrok.log` and keeps its data in `~/Libr
 
 ## Debian and Ubuntu
 
-Add the repository, then install:
+Download `shrok_<version>_amd64.deb` or `shrok_<version>_arm64.deb` from the [releases page](https://github.com/bjoernaagaard/shrok/releases), then install it:
 
 ```sh
-curl -fsSL https://bjoernaagaard.github.io/shrok/shrok-archive-key.asc |
-  sudo tee /etc/apt/keyrings/shrok.asc >/dev/null
-echo "deb [signed-by=/etc/apt/keyrings/shrok.asc] https://bjoernaagaard.github.io/shrok stable main" |
-  sudo tee /etc/apt/sources.list.d/shrok.list
-sudo apt update
-sudo apt install shrok
+sudo apt install ./shrok_*_$(dpkg --print-architecture).deb
 ```
 
 Store the key as an encrypted systemd credential, set the time zone and locale, and start Shrok:

@@ -5,16 +5,6 @@ description: Read, search and draft email in the user's Gmail. Use for anything 
 
 # Gmail
 
-| Task | Tool |
-| --- | --- |
-| Unread mail | `gmail_search` with `is:unread` |
-| Search | `gmail_search` with any Gmail search: `from:`, `subject:`, `newer_than:7d`, `has:attachment` |
-| Read one message | `gmail_read` with the id from a search |
-| Summarize | `gmail_read`, then summarize it yourself (in a flow, `transform_text`) |
-| Draft a new email | `gmail_draft` with `to`, `subject` and `body` |
-| Draft a reply | `gmail_draft` with `reply_to` (the message id) and `body` |
-| Send | Unsupported. Save a draft for the owner to send in Gmail. |
-
-- Draft creation keeps working without approval. Tell the owner the draft is in Gmail.
-- Sending is blocked until a reviewed adapter can bind the acting account and final payload to approval. A generic yes cannot override this.
-- `run_program` and unreviewed Google operations are blocked. Ask the owner to complete unsupported steps in Gmail, not through another tool.
+- Find mail with `gmail_search`, which takes any Gmail search, such as `is:unread`, `from:anna` or `newer_than:7d`. Read one message with `gmail_read` and its id, and summarize it yourself (in a flow, with `transform_text`).
+- Write a new email or a reply as a draft with `gmail_draft`. For a reply, pass the message id as `reply_to`. Tell the owner the draft is in Gmail.
+- Sending is blocked, and a generic yes can't unblock it. `run_program` and other Google operations are blocked too. Ask the owner to finish those steps in Gmail.
