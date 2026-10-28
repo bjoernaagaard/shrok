@@ -44,7 +44,7 @@ sequenceDiagram
 
 | Where | How | Guide |
 | --- | --- | --- |
-| Mac | `brew install bjoernaagaard/shrok/shrok` | [docs/setup.md](docs/setup.md#homebrew) |
+| Mac | `brew tap bjoernaagaard/shrok`, `brew trust bjoernaagaard/shrok`, then `brew install shrok` | [docs/setup.md](docs/setup.md#homebrew) |
 | Debian or Ubuntu | the `.deb` from the [releases page](https://github.com/bjoernaagaard/shrok/releases) | [docs/setup.md](docs/setup.md#debian-and-ubuntu) |
 | Docker | `ghcr.io/bjoernaagaard/shrok` with `packaging/oci/compose.yaml` | [docs/setup.md](docs/setup.md#docker) |
 | Any Linux or Mac | the portable archive from the [releases page](https://github.com/bjoernaagaard/shrok/releases) | [docs/setup.md](docs/setup.md#portable-archive) |
