@@ -1,0 +1,48 @@
+{
+  "name": "shrok",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "shrok": "src/cli.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "check": "ultracite check && knip",
+    "fix": "ultracite fix"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.81",
+    "@earendil-works/chord": "^1.4.0",
+    "@earendil-works/pi-ai": "^1.4.0",
+    "@earendil-works/pi-codemode": "1.4.0",
+    "@earendil-works/pi-durable": "^1.4.0",
+    "@earendil-works/pi-mcp": "^1.4.0",
+    "@llamaindex/liteparse": "2.17.0",
+    "@simplex-chat/types": "7.1.0-beta.6.2",
+    "playwright-core": "^1.64.1",
+    "sharp": "^0.35.5",
+    "simplex-chat": "7.1.0-beta.6.6",
+    "typebox": "1.4.3",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "knip": "^6.42.1",
+    "oxfmt": "^0.74.0",
+    "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "ultracite": "8.0.2"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.15.0",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "packageManager": "pnpm@12.15.0"
+}

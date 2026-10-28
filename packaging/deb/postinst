@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+  if ! getent passwd shrok >/dev/null; then
+    adduser --system --group --home /var/lib/shrok --no-create-home --shell /usr/sbin/nologin shrok >/dev/null
+  fi
+
+  install -d -o shrok -g shrok -m 0700 /var/lib/shrok
+  install -d -m 0755 /etc/shrok
+
+  # Ubuntu stops bubblewrap and the browser from making user namespaces unless a profile allows it.
+  if command -v apparmor_parser >/dev/null && [ -d /sys/kernel/security/apparmor ]; then
+    apparmor_parser -r -W /etc/apparmor.d/shrok-bwrap /etc/apparmor.d/shrok-browser || true
+  fi
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+
+    if systemctl is-active --quiet shrok; then
+      systemctl restart shrok || true
+    fi
+  fi
+
+  if [ -z "$2" ]; then
+    cat <<'EOF'
+Shrok is installed. To start it:
+  1. Store your model key:
+     echo -n 'sk-ant-...' | sudo systemd-creds encrypt --name=ANTHROPIC_API_KEY - /etc/credstore.encrypted/ANTHROPIC_API_KEY
+  2. Set your time zone and locale in /etc/shrok/env, such as SHROK_TIME_ZONE=Europe/Copenhagen and SHROK_LOCALE=en-GB
+  3. sudo systemctl enable --now shrok
+  4. sudo -u shrok shrok pair
+EOF
+  fi
+fi

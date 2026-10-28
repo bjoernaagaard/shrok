@@ -1,0 +1,333 @@
+name: release
+
+# A v* tag builds every artifact on native runners and publishes them: the GitHub release, the image on
+# GHCR, the signed apt repository on GitHub Pages and the Homebrew formula. A manual run builds the same
+# artifacts and stops before publishing anything, as does a push to a verify/ branch.
+on:
+  push:
+    tags: ["v*"]
+    branches: ["verify/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, os: linux }
+          - { runner: ubuntu-24.04-arm, os: linux }
+          - { runner: macos-15, os: macos }
+          - { runner: macos-15-intel, os: macos }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(jq -r .version package.json)" = "$GITHUB_REF_NAME"
+      - name: App and portable archive
+        run: |
+          sh packaging/app.sh "$RUNNER_TEMP/app"
+          sh packaging/archive.sh "$RUNNER_TEMP/app" dist
+      - name: .deb
+        if: matrix.os == 'linux'
+        run: sh packaging/deb/build.sh "$RUNNER_TEMP/app" dist
+      - name: Smoke test the archive
+        run: |
+          mkdir "$RUNNER_TEMP/unpacked" && tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/unpacked"
+          shrok=$(echo "$RUNNER_TEMP"/unpacked/*/bin/shrok)
+          set --
+          if [ "${{ matrix.os }}" = linux ]; then
+            # As a Linux user installs it: in /opt/shrok, with its AppArmor profiles loaded.
+            sudo apt-get install -y --no-install-recommends bubblewrap socat ripgrep apparmor-utils >/dev/null
+            sudo mv "$RUNNER_TEMP"/unpacked/shrok-* /opt/shrok
+            sudo chown -R root:root /opt/shrok
+            sudo apparmor_parser -r /opt/shrok/share/apparmor/*
+            shrok=/opt/shrok/bin/shrok
+            set -- aa-exec -p shrok-bwrap --
+          fi
+          cd /tmp && env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            SHROK="$shrok" "$@" sh "$GITHUB_WORKSPACE/.github/verify/smoke.sh" | tee smoke.txt
+          grep -q 'printed an invite' smoke.txt && grep -q 'exit 0' smoke.txt && ! grep -q FAILED smoke.txt
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: dist-${{ matrix.runner }}
+          path: dist
+
+  image:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux/amd64, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build
+        run: docker buildx build -f packaging/oci/Dockerfile --target runtime --platform ${{ matrix.platform }} -t shrok --load .
+      - name: Smoke test the image
+        run: |
+          sudo apparmor_parser -r -W packaging/oci/apparmor/shrok-container
+          docker run --rm --security-opt seccomp=packaging/oci/seccomp.json --security-opt systempaths=unconfined \
+            --security-opt apparmor=shrok-container --tmpfs /tmp -v "$PWD/.github/verify:/v:ro" -e SHROK=shrok \
+            --entrypoint sh shrok /v/smoke.sh | tee smoke.txt
+          grep -q 'printed an invite' smoke.txt && grep -q 'exit 0' smoke.txt && ! grep -q FAILED smoke.txt
+      - name: Push this architecture
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          image="ghcr.io/bjoernaagaard/shrok:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.arch }}"
+          docker tag shrok "$image"
+          docker push "$image"
+          # Read the pushed digest from the local image, never by resolving the mutable registry tag.
+          docker image inspect "$image" --format '{{index .RepoDigests 0}}' |
+            grep -Ex 'ghcr.io/bjoernaagaard/shrok@sha256:[0-9a-f]{64}' >"image-${{ matrix.arch }}.txt"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: image-${{ matrix.arch }}
+          path: image-${{ matrix.arch }}.txt
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, image]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      apt: ${{ steps.apt.outputs.published }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: image-*
+          path: images
+          merge-multiple: true
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Multi-arch image, signed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          version=${GITHUB_REF_NAME#v}
+          for arch in amd64 arm64; do
+            grep -Ex 'ghcr.io/bjoernaagaard/shrok@sha256:[0-9a-f]{64}' "images/image-$arch.txt" >/dev/null
+          done
+          IFS= read -r amd64 <images/image-amd64.txt
+          IFS= read -r arm64 <images/image-arm64.txt
+          docker buildx imagetools create --metadata-file "$RUNNER_TEMP/image-index.json" \
+            -t "ghcr.io/bjoernaagaard/shrok:$version" -t ghcr.io/bjoernaagaard/shrok:latest "$amd64" "$arm64"
+          digest=$(jq -er '."containerimage.descriptor".digest | select(test("^sha256:[0-9a-f]{64}$"))' "$RUNNER_TEMP/image-index.json")
+          cosign sign --yes "ghcr.io/bjoernaagaard/shrok@$digest"
+          echo "IMAGE_DIGEST=$digest" >>"$GITHUB_ENV"
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: Provenance for the archives and .debs
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: dist/*
+      - name: Provenance for the image
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/bjoernaagaard/shrok
+          subject-digest: ${{ env.IMAGE_DIGEST }}
+          push-to-registry: true
+      - name: Sign the archives and .debs
+        run: |
+          for file in dist/*; do
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+          done
+      - name: Prepare the SBOM directory
+        run: mkdir -p sbom
+      - name: SBOM for the linux-x64 archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok-${{ env.VERSION }}-linux-x64.tar.gz
+          format: spdx-json
+          output-file: sbom/shrok-${{ env.VERSION }}-linux-x64.tar.gz.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the linux-x64 archive SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok-${{ env.VERSION }}-linux-x64.tar.gz
+          sbom-path: sbom/shrok-${{ env.VERSION }}-linux-x64.tar.gz.spdx.json
+      - name: SBOM for the linux-arm64 archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok-${{ env.VERSION }}-linux-arm64.tar.gz
+          format: spdx-json
+          output-file: sbom/shrok-${{ env.VERSION }}-linux-arm64.tar.gz.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the linux-arm64 archive SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok-${{ env.VERSION }}-linux-arm64.tar.gz
+          sbom-path: sbom/shrok-${{ env.VERSION }}-linux-arm64.tar.gz.spdx.json
+      - name: SBOM for the macos-arm64 archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok-${{ env.VERSION }}-macos-arm64.tar.gz
+          format: spdx-json
+          output-file: sbom/shrok-${{ env.VERSION }}-macos-arm64.tar.gz.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the macos-arm64 archive SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok-${{ env.VERSION }}-macos-arm64.tar.gz
+          sbom-path: sbom/shrok-${{ env.VERSION }}-macos-arm64.tar.gz.spdx.json
+      - name: SBOM for the macos-x64 archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok-${{ env.VERSION }}-macos-x64.tar.gz
+          format: spdx-json
+          output-file: sbom/shrok-${{ env.VERSION }}-macos-x64.tar.gz.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the macos-x64 archive SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok-${{ env.VERSION }}-macos-x64.tar.gz
+          sbom-path: sbom/shrok-${{ env.VERSION }}-macos-x64.tar.gz.spdx.json
+      - name: SBOM for the amd64 .deb
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok_${{ env.VERSION }}_amd64.deb
+          format: spdx-json
+          output-file: sbom/shrok_${{ env.VERSION }}_amd64.deb.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the amd64 .deb SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok_${{ env.VERSION }}_amd64.deb
+          sbom-path: sbom/shrok_${{ env.VERSION }}_amd64.deb.spdx.json
+      - name: SBOM for the arm64 .deb
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: dist/shrok_${{ env.VERSION }}_arm64.deb
+          format: spdx-json
+          output-file: sbom/shrok_${{ env.VERSION }}_arm64.deb.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the arm64 .deb SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/shrok_${{ env.VERSION }}_arm64.deb
+          sbom-path: sbom/shrok_${{ env.VERSION }}_arm64.deb.spdx.json
+      - name: SBOM for the image
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/bjoernaagaard/shrok@${{ env.IMAGE_DIGEST }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom/shrok-${{ env.VERSION }}-image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the image SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ghcr.io/bjoernaagaard/shrok
+          subject-digest: ${{ env.IMAGE_DIGEST }}
+          sbom-path: sbom/shrok-${{ env.VERSION }}-image.spdx.json
+          push-to-registry: true
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "Shrok ${GITHUB_REF_NAME#v}" --generate-notes dist/* sbom/*.spdx.json
+      # Without its secret, each of the next steps skips with a notice, so a release still publishes the rest.
+      - name: Signed apt repository
+        id: apt
+        env:
+          DEB_SIGNING_KEY: ${{ secrets.DEB_SIGNING_KEY }}
+        run: |
+          if [ -z "$DEB_SIGNING_KEY" ]; then echo "::notice::No DEB_SIGNING_KEY, so no apt repository."; exit 0; fi
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends apt-utils
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          printenv DEB_SIGNING_KEY | gpg --batch --import
+          mkdir -p site/pool/main site/dists/stable/main/binary-amd64 site/dists/stable/main/binary-arm64
+          cp dist/*.deb site/pool/main/
+          cd site
+          for arch in amd64 arm64; do
+            apt-ftparchive --arch "$arch" packages pool >"dists/stable/main/binary-$arch/Packages"
+            gzip -9kf "dists/stable/main/binary-$arch/Packages"
+          done
+          apt-ftparchive -o APT::FTPArchive::Release::Origin=Shrok -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable -o APT::FTPArchive::Release::Components=main \
+            -o "APT::FTPArchive::Release::Architectures=amd64 arm64" release dists/stable >dists/stable/Release
+          gpg --batch --yes --armor --detach-sign -o dists/stable/Release.gpg dists/stable/Release
+          gpg --batch --yes --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --armor --export >shrok-archive-key.asc
+          rm -rf "$GNUPGHOME"
+          echo published=true >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        if: steps.apt.outputs.published == 'true'
+        with:
+          path: site
+      - name: Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::notice::No HOMEBREW_TAP_TOKEN, so no Homebrew formula."; exit 0; fi
+          version=${GITHUB_REF_NAME#v}
+          sed -e "s/@VERSION@/$version/g" \
+            -e "s/@SHA256_ARM64@/$(sha256sum "dist/shrok-$version-macos-arm64.tar.gz" | cut -d ' ' -f 1)/" \
+            -e "s/@SHA256_X64@/$(sha256sum "dist/shrok-$version-macos-x64.tar.gz" | cut -d ' ' -f 1)/" \
+            packaging/homebrew/shrok.rb >shrok.rb
+          gh repo clone bjoernaagaard/homebrew-shrok tap
+          mkdir -p tap/Formula && cp shrok.rb tap/Formula/shrok.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/shrok.rb
+          git commit -m "shrok $version"
+          # HEAD:main also works on the tap's first push, when it has no branch yet.
+          git push origin HEAD:main
+
+  pages:
+    needs: publish
+    if: needs.publish.outputs.apt == 'true'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

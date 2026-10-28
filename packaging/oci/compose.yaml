@@ -1,0 +1,38 @@
+# Shrok in Docker Compose.
+#
+#   1. Use a fresh deployment folder and secrets directory, both mode 0700. Install your key at
+#      ./secrets/ANTHROPIC_API_KEY with owner 10001:10001 and mode 0400, as shown in docs/setup.md.
+#      Compose binds the host file without remapping its ownership or permissions.
+#   2. Set SHROK_TIME_ZONE and SHROK_LOCALE in .env next to this file, such as SHROK_TIME_ZONE=Europe/Copenhagen
+#      and SHROK_LOCALE=en-GB.
+#   3. On a host with AppArmor, such as Ubuntu: sudo apparmor_parser -r -W apparmor/shrok-container
+#      On Docker Desktop or OrbStack, delete the apparmor line below.
+#   4. docker compose up -d, then: docker compose exec shrok shrok pair
+
+services:
+  shrok:
+    image: ghcr.io/bjoernaagaard/shrok:latest
+    restart: unless-stopped
+    environment:
+      SHROK_TIME_ZONE: ${SHROK_TIME_ZONE:?Set SHROK_TIME_ZONE in .env, such as Europe/Copenhagen}
+      SHROK_LOCALE: ${SHROK_LOCALE:?Set SHROK_LOCALE in .env, such as en-GB}
+      ANTHROPIC_API_KEY_FILE: /run/secrets/ANTHROPIC_API_KEY
+    secrets:
+      - ANTHROPIC_API_KEY
+    volumes:
+      - shrok-data:/data
+    tmpfs:
+      - /tmp
+    security_opt:
+      - seccomp=seccomp.json
+      - systempaths=unconfined
+      - apparmor=shrok-container
+    # Shrok needs up to 20 s to close SimpleX and the browser. Docker's default is 10 s.
+    stop_grace_period: 30s
+
+secrets:
+  ANTHROPIC_API_KEY:
+    file: ./secrets/ANTHROPIC_API_KEY
+
+volumes:
+  shrok-data:

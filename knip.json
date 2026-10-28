@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.ts",
+    "test/flow.ts",
+    "test/schedule.ts",
+    "test/filesystem-guard-race.ts",
+    "test/x-post.ts",
+    "test/save-link.ts",
+    "test/release.ts",
+    "test/security-fixes.ts",
+    "test/hostile-content.ts"
+  ],
+  "ignoreBinaries": ["gws"],
+  "ignoreDependencies": ["@llamaindex/liteparse"]
+}

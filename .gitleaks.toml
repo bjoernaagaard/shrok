@@ -1,0 +1,13 @@
+title = "shrok release audit"
+
+[[allowlists]]
+description = "Chrome's reading mode manifest contains its public extension key"
+paths = [
+  '''^shrok-0\.1\.0-macos-arm64/browsers/chrome-headless-shell-mac-arm64/resources/accessibility/reading_mode_gdocs_helper_manifest\.json$''',
+]
+rules = ["generic-api-key"]
+
+[[allowlists]]
+description = "Debian Chromium ships public browser API and OAuth values"
+paths = ['''^etc/chromium\.d/apikeys$''']
+rules = ["generic-api-key", "gcp-api-key"]

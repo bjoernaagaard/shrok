@@ -1,0 +1,12 @@
+version: "0.5"
+
+processes:
+  shrok:
+    command: secretspec run -- node src/main.ts
+    log_location: data/shrok.log
+    availability:
+      restart: on_failure
+      backoff_seconds: 5
+      max_restarts: 5
+    shutdown:
+      timeout_seconds: 30

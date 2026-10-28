@@ -1,0 +1,10 @@
+# Ubuntu 24.04 restricts user namespaces. Select this profile explicitly from shrok.service.
+# Children, including bubblewrap and the browser, inherit it; unrelated executions do not attach.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile shrok-bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/shrok-bwrap>
+}

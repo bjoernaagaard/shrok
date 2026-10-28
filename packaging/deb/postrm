@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi
+
+# Shrok's chats, memory and SimpleX keys stay in /var/lib/shrok even on purge.
+if [ "$1" = purge ]; then
+  echo "Shrok's data is still in /var/lib/shrok. Delete it yourself if you no longer need it."
+fi

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = remove ]; then
+  if [ -d /run/systemd/system ]; then
+    systemctl disable --now shrok >/dev/null 2>&1 || true
+  fi
+
+  if command -v apparmor_parser >/dev/null && [ -d /sys/kernel/security/apparmor ]; then
+    apparmor_parser -R /etc/apparmor.d/shrok-bwrap /etc/apparmor.d/shrok-browser >/dev/null 2>&1 || true
+  fi
+fi

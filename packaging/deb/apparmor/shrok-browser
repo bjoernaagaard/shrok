@@ -1,0 +1,8 @@
+# Keep this name to replace the executable-attached profile during package upgrades.
+# The browser now inherits shrok-bwrap from the service instead of granting namespaces to any caller.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile shrok-browser flags=(unconfined) {
+  include if exists <local/shrok-browser>
+}

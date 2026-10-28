@@ -1,0 +1,16 @@
+# SHA-256 of every binary that packaging/app.sh and .github/workflows/verify.yml download.
+# A version bump in mise.toml, app.sh or playwright-core needs new lines here, or the build stops.
+# Node: nodejs.org SHASUMS256.txt. Obscura: GitHub's asset digests. Chrome Headless Shell: hashed from
+# cdn.playwright.dev and matched against the MD5 that Google's chrome-for-testing-public bucket reports.
+18830bf448fe187c650dc28c98aa8c968ed1d40b6dd032c081e70a384a1bf660  node-v26.12.1-darwin-arm64.tar.xz
+69316aaafb4dfcb25ac7b9a460f5c60928a37580284fde410144d0e6c8672d0f  node-v26.12.1-darwin-x64.tar.xz
+42aa04922591ee5d4dbc7740d452621acf28508239daa512f5ee8c47ee224fdb  node-v26.12.1-linux-arm64.tar.xz
+6170b2d474e1c626f43cff3adc118df9fe3b573258a4fc3d850c8dbc6b079bbd  node-v26.12.1-linux-x64.tar.xz
+fcca31eba4280cd67a2e226ef4b015e432d5c089f78cefd074ad12bbc8e23345  obscura-v0.2.5-aarch64-macos.tar.gz
+9f354cf929a577491d6ba0ef451e07baefffd19d34115330f69a0e463771d6cd  obscura-v0.2.5-x86_64-macos.tar.gz
+24c549a348b1d464e80aa3f643bc0c874b0a2942fb7836c683528028d0fbb190  obscura-v0.2.5-aarch64-linux.tar.gz
+2116764b99bc084fae3668b68aa535b4cf456e4498845b47493ad4123e83ca36  obscura-v0.2.5-x86_64-linux.tar.gz
+94e4337b70cbc5638f0935fbc46b9f242bc7416f657e3fbe924baf348404b53d  chrome-headless-shell-156.0.8078.4-mac-arm64.zip
+8a9e4a32ba5b1a796f8b16d01896e355cf6662544d9743296394fd999d782331  chrome-headless-shell-156.0.8078.4-mac-x64.zip
+81ab9d4d3c301dc5fdfb6c541b9e6632b16fc819a6a854460f40a76fe2b2c476  chrome-headless-shell-156.0.8078.4-linux-arm64.zip
+c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20  chrome-headless-shell-156.0.8078.4-linux64.zip

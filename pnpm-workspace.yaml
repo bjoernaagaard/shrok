@@ -1,0 +1,12 @@
+allowBuilds:
+  "@google/genai": false
+  protobufjs: false
+  # Prebuilt binaries come from @img/sharp-*. The script only compiles from source.
+  sharp: false
+
+# sandbox-runtime pins zod 3, which has a memory-exhaustion advisory fixed only in zod 4.6.6.
+# sandbox-runtime allows node-forge ^1.4.0; 1.4.0 has GHSA-86w9-cpqp-85rv (RSA PKCS#1 v1.5
+# signature forgery), fixed in 1.4.1+. Pin the patched release within its range.
+overrides:
+  "@anthropic-ai/sandbox-runtime>node-forge": ^1.4.2
+  "@anthropic-ai/sandbox-runtime>zod": ^4.6.6

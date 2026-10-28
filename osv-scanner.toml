@@ -1,0 +1,9 @@
+# deepmerge 4.3.1 (GHSA-gcqx-w48m-w2h4, prototype poisoning in mergeObject) has no fixed
+# release: 4.3.1 is the latest version on npm, so there is nothing to upgrade to.
+# It reaches Shrok only as a devDependency of ultracite (lint/format tooling). The shipped
+# app is built with `pnpm install --prod` (packaging/app.sh), so deepmerge is never in a
+# release artifact, and ultracite only merges this repo's own trusted config files.
+# Re-check when a patched deepmerge ships and remove this ignore then.
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+reason = "No fixed version (4.3.1 is latest). Dev-only via ultracite, excluded from shipped artifacts by pnpm install --prod in packaging/app.sh; only merges trusted repo config."

@@ -1,0 +1,54 @@
+# Shrok as a system service, run as the user "shrok" with its data in /var/lib/shrok.
+#
+# Secrets are systemd credentials, encrypted on this machine, for example:
+#   echo -n 'sk-ant-...' | sudo systemd-creds encrypt --name=ANTHROPIC_API_KEY - /etc/credstore.encrypted/ANTHROPIC_API_KEY
+# Settings such as SHROK_TIME_ZONE and SHROK_LOCALE go in /etc/shrok/env, one NAME=value per line.
+# Pair your phone with: sudo -u shrok shrok pair
+
+[Unit]
+Description=Shrok, a personal assistant you talk to through SimpleX
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=shrok
+Group=shrok
+# Only this service and its children receive the namespace exception. Ignore hosts without AppArmor.
+AppArmorProfile=-shrok-bwrap
+ExecStart=/opt/shrok/bin/shrok run
+EnvironmentFile=-/etc/shrok/env
+Environment=SHROK_DATA_DIR=/var/lib/shrok
+StateDirectory=shrok
+StateDirectoryMode=0700
+UMask=0077
+
+# Missing credentials are skipped, so only the model key has to exist.
+ImportCredential=ANTHROPIC_API_KEY
+ImportCredential=ANTHROPIC_BASE_URL
+ImportCredential=OPENAI_API_KEY
+ImportCredential=OPENAI_BASE_URL
+ImportCredential=GOOGLE_WORKSPACE_CLI_CLIENT_ID
+ImportCredential=GOOGLE_WORKSPACE_CLI_CLIENT_SECRET
+ImportCredential=XURL_CLIENT_ID
+ImportCredential=XURL_CLIENT_SECRET
+ImportCredential=TYPESAFE_API_KEY
+
+# Shrok stops within 20 s; SIGTERM goes to Shrok, which closes the browser and SimpleX itself.
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

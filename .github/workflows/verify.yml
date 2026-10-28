@@ -1,0 +1,235 @@
+name: verify
+
+# Phase 0 on hosts this Mac can't be: native Linux amd64 and arm64 with Ubuntu's AppArmor user namespace
+# restriction on, and Intel macOS. Runs on a push to a verify/ branch. Results are uploaded as artifacts.
+on:
+  push:
+    branches: ["verify/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OBSCURA_VERSION: v0.2.5
+  NODE_VERSION: 26.12.1
+  PRIVATE_UMASK: "0077"
+  PRIVATE_DIRECTORY_MODE: "0700"
+  PRIVATE_SECRET_MODE: "0400"
+  SHROK_UID: "10001"
+  SHROK_GID: "10001"
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: verification
+    env:
+      PW: ${{ github.workspace }}/node_modules/playwright-core/index.mjs
+      SRT: ${{ github.workspace }}/node_modules/.bin/srt
+      REPORT: ${{ github.workspace }}/out/report.md
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install the runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap socat ripgrep apparmor-utils
+          pnpm install --frozen-lockfile
+          case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64) arch=aarch64 ;; esac
+          mkdir -p "$HOME/obscura"
+          asset="obscura-$OBSCURA_VERSION-$arch-linux.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "https://github.com/h4ckf0r0day/obscura/releases/download/$OBSCURA_VERSION/obscura-$arch-linux.tar.gz"
+          awk -v name="$asset" '$2 == name' packaging/checksums.txt | grep . | (cd "$RUNNER_TEMP" && sha256sum -c -)
+          tar -xz -C "$HOME/obscura" -f "$RUNNER_TEMP/$asset"
+          echo "$HOME/obscura" >>"$GITHUB_PATH"
+          PLAYWRIGHT_BROWSERS_PATH="$HOME/playwright" node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          echo "CHROME=$(find "$HOME/playwright" -name chrome-headless-shell -type f | head -n 1)" >>"$GITHUB_ENV"
+          mkdir -p out
+      - name: Host, Ubuntu's default user namespace restriction, no profiles
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          {
+            echo "# ${{ matrix.runner }} $(uname -m), kernel $(uname -r), $(bwrap --version)"
+            echo
+            echo "## Host, apparmor_restrict_unprivileged_userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns), no profiles"
+            .github/verify/probe.sh
+            .github/verify/smoke.sh
+          } 2>&1 | tee -a "$REPORT"
+      - name: Host, with an explicitly selected namespace profile
+        run: |
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile shrok-verify flags=(unconfined) {\n  userns,\n}\n' |
+            sudo tee /etc/apparmor.d/shrok-verify >/dev/null
+          sudo apparmor_parser -r -W /etc/apparmor.d/shrok-verify
+          {
+            echo
+            echo "## Host, with a namespace profile selected only for these probes"
+            aa-exec -p shrok-verify -- .github/verify/probe.sh
+            aa-exec -p shrok-verify -- .github/verify/smoke.sh
+          } 2>&1 | tee -a "$REPORT"
+      - name: Image, under Docker's seccomp and AppArmor
+        run: |
+          docker buildx build -f packaging/oci/Dockerfile --target verify -t shrok-verify --load . >out/image.txt 2>&1
+          sudo apparmor_parser -r -W packaging/oci/apparmor/shrok-container
+          seccomp="--security-opt seccomp=packaging/oci/seccomp.json --security-opt systempaths=unconfined"
+          {
+            echo
+            echo "## Image ($(docker info --format '{{.SecurityOptions}}'))"
+            for config in "default|" "seccomp.json|$seccomp" \
+              "seccomp.json, apparmor=unconfined|$seccomp --security-opt apparmor=unconfined" \
+              "seccomp.json, apparmor=shrok-container|$seccomp --security-opt apparmor=shrok-container"; do
+              echo
+              echo "### ${config%%|*}"
+              # shellcheck disable=SC2086
+              docker run --rm ${config#*|} -v "$PWD/.github/verify:/v:ro" -e CHROME=/usr/bin/chromium \
+                -e PW=/opt/shrok/app/node_modules/playwright-core/index.mjs -e SRT=/opt/shrok/app/node_modules/.bin/srt \
+                --entrypoint sh shrok-verify /v/probe.sh
+            done
+            echo
+            echo "### shrok run and shrok pair, seccomp.json, apparmor=shrok-container"
+            # shellcheck disable=SC2086
+            docker run --rm $seccomp --security-opt apparmor=shrok-container --tmpfs /tmp -v "$PWD/.github/verify:/v:ro" \
+              -e SHROK=shrok --entrypoint sh shrok-verify /v/smoke.sh
+          } 2>&1 | tee -a "$REPORT"
+      - name: Image, docker stop
+        run: |
+          seccomp="--security-opt seccomp=packaging/oci/seccomp.json --security-opt systempaths=unconfined"
+          # shellcheck disable=SC2086
+          docker run -d --name smoke $seccomp --security-opt apparmor=shrok-container -e ANTHROPIC_API_KEY=placeholder \
+            -e SHROK_TIME_ZONE=Europe/Copenhagen -e SHROK_LOCALE=en-GB shrok-verify shrok run >/dev/null
+          waited=0
+          until docker logs smoke 2>&1 | grep -q 'Shrok is ready' || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
+          stopped=$(date +%s)
+          docker stop -t 30 smoke >/dev/null
+          {
+            echo
+            echo "### the image's own command"
+            echo "ready: $(docker logs smoke 2>&1 | grep -c 'Shrok is ready') after ${waited}s"
+            echo "docker stop: exit $(docker inspect -f '{{.State.ExitCode}}' smoke) after $(($(date +%s) - stopped))s"
+          } 2>&1 | tee -a "$REPORT"
+      - name: Image, browser-security end to end
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$TYPESAFE_API_KEY" ]; then exit 0; fi
+          umask "$PRIVATE_UMASK"
+          secrets=$(mktemp -d)
+          trap 'sudo rm -rf "$secrets"; sudo chown -R "$(id -u):$(id -g)" out/tests' EXIT
+          printenv ANTHROPIC_API_KEY >"$secrets/ANTHROPIC_API_KEY"
+          printenv TYPESAFE_API_KEY >"$secrets/TYPESAFE_API_KEY"
+          chmod "$PRIVATE_SECRET_MODE" "$secrets"/*
+          sudo chown -R "$SHROK_UID:$SHROK_GID" "$secrets"
+          mkdir -p out/tests && sudo chown "$SHROK_UID:$SHROK_GID" out/tests && sudo chmod "$PRIVATE_DIRECTORY_MODE" out/tests
+          docker run --rm --security-opt seccomp=packaging/oci/seccomp.json --security-opt systempaths=unconfined \
+            --security-opt apparmor=shrok-container --tmpfs /tmp --mount "type=bind,src=$secrets,dst=/run/secrets,readonly" \
+            -e ANTHROPIC_API_KEY_FILE=/run/secrets/ANTHROPIC_API_KEY -e TYPESAFE_API_KEY_FILE=/run/secrets/TYPESAFE_API_KEY \
+            -e SHROK_TIME_ZONE=Europe/Copenhagen -e SHROK_LOCALE=en-GB \
+            -v "$PWD/out/tests:/opt/shrok/app/test/output" shrok-verify node test/browser-security.ts \
+            2>&1 | tee out/browser-security.console.txt
+      - name: .deb under systemd, with Ubuntu's user namespace restriction
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo apt-get remove -y --purge google-chrome-stable >/dev/null 2>&1 || true
+          sh packaging/app.sh "$RUNNER_TEMP/app" >out/app.txt 2>&1
+          sh packaging/deb/build.sh "$RUNNER_TEMP/app" out/deb
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./out/deb/shrok_*.deb 2>&1 | tee out/deb-install.txt >/dev/null
+          printf placeholder | sudo systemd-creds encrypt --name=ANTHROPIC_API_KEY - /etc/credstore.encrypted/ANTHROPIC_API_KEY
+          printf 'SHROK_TIME_ZONE=Europe/Copenhagen\nSHROK_LOCALE=en-GB\n' | sudo tee /etc/shrok/env >/dev/null
+          sudo systemctl enable --now shrok
+          waited=0
+          until sudo journalctl -u shrok --no-pager | grep -q 'Shrok is ready' || [ "$waited" -ge 120 ]; do sleep 1; waited=$((waited + 1)); done
+          {
+            echo
+            echo "## .deb, systemd $(systemctl --version | head -n 1 | cut -d ' ' -f 2), apparmor_restrict_unprivileged_userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)"
+            echo "profiles loaded: $(sudo aa-status 2>/dev/null | grep -c 'shrok-')"
+            echo "ready: $(sudo journalctl -u shrok --no-pager | grep -c 'Shrok is ready') after ${waited}s"
+            sudo -u shrok sh -c 'cd /tmp && timeout 5 shrok pair' | head -n 1
+            stopped=$(date +%s)
+            sudo systemctl stop shrok
+            echo "systemctl stop: $(systemctl show -p Result --value shrok) after $(($(date +%s) - stopped))s"
+            sudo journalctl -u shrok --no-pager | sed -E 's#https://[^ ]+#<link>#g' | tail -n 8
+          } 2>&1 | tee -a "$REPORT"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: verify-${{ matrix.runner }}
+          path: |
+            out
+            !out/deb
+
+  macos-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    environment: verification
+    env:
+      CHROME: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+      PW: ${{ github.workspace }}/node_modules/playwright-core/index.mjs
+      SRT: ${{ github.workspace }}/node_modules/.bin/srt
+      REPORT: ${{ github.workspace }}/out/report.md
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install the runtime
+        run: |
+          brew install ripgrep
+          pnpm install --frozen-lockfile
+          mkdir -p "$HOME/obscura" out
+          asset="obscura-$OBSCURA_VERSION-x86_64-macos.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "https://github.com/h4ckf0r0day/obscura/releases/download/$OBSCURA_VERSION/obscura-x86_64-macos.tar.gz"
+          awk -v name="$asset" '$2 == name' packaging/checksums.txt | grep . | (cd "$RUNNER_TEMP" && shasum -a 256 -c -)
+          tar -xz -C "$HOME/obscura" -f "$RUNNER_TEMP/$asset"
+          echo "$HOME/obscura" >>"$GITHUB_PATH"
+      - name: Probe and smoke
+        run: |
+          {
+            echo "# macos-15-intel $(uname -m), macOS $(sw_vers -productVersion)"
+            echo
+            .github/verify/probe.sh
+            .github/verify/smoke.sh
+          } 2>&1 | tee -a "$REPORT"
+      - name: Portable archive
+        run: |
+          sh packaging/app.sh "$RUNNER_TEMP/app" >out/app.txt 2>&1
+          sh packaging/archive.sh "$RUNNER_TEMP/app" out/archive
+          mkdir "$RUNNER_TEMP/unpacked" && tar -xzf out/archive/*.tar.gz -C "$RUNNER_TEMP/unpacked"
+          {
+            echo
+            echo "## Portable archive, empty environment"
+            cd /tmp && env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+              SHROK="$(echo "$RUNNER_TEMP"/unpacked/*/bin/shrok)" sh "$GITHUB_WORKSPACE/.github/verify/smoke.sh"
+          } 2>&1 | tee -a "$REPORT"
+      - name: browser-security end to end
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$TYPESAFE_API_KEY" ]; then exit 0; fi
+          umask "$PRIVATE_UMASK"
+          node test/browser-security.ts 2>&1 | tee out/browser-security.console.txt
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: verify-macos-15-intel
+          path: |
+            out
+            !out/archive
+            test/output/browser-security
