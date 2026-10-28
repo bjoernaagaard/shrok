@@ -7,7 +7,9 @@ Pick one way to install. Each ends with Shrok running and waiting for your phone
 On a Mac:
 
 ```sh
-brew install bjoernaagaard/shrok/shrok
+brew tap bjoernaagaard/shrok
+brew trust bjoernaagaard/shrok   # Homebrew asks you to trust a tap before it loads its formulas
+brew install shrok
 $(brew --prefix secretspec)/bin/secretspec set -f $(brew --prefix)/var/shrok/app/app/secretspec.toml \
   --provider keyring:// ANTHROPIC_API_KEY
 brew services start shrok
