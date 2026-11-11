@@ -19,59 +19,59 @@
 # The Node binary contains coincidental byte sequences.
 ^opt/shrok/node/bin/node$
 # Node HTTP type examples contain a sample URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/@types/node/http\.d\.ts$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/@types/node/http\.d\.ts$
 # Node HTTPS type examples contain a sample URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/@types/node/https\.d\.ts$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/@types/node/https\.d\.ts$
 # Google auth documentation contains a public example key.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/google-auth-library/README\.md$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/google-auth-library/README\.md$
 # Playwright includes a sample URL in its bundled code.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/playwright-core/lib/coreBundle\.js$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/playwright-core/lib/coreBundle\.js$
 # SimpleX documentation contains a sample database URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/simplex-chat/README\.md$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/simplex-chat/README\.md$
 # SimpleX declarations contain a sample database URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/simplex-chat/dist/api\.d\.ts$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/simplex-chat/dist/api\.d\.ts$
 # SimpleX API documentation contains a sample database URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
 # SimpleX source documents a sample database URL.
-^shrok-0\.1\.0-linux-arm64/app/node_modules/simplex-chat/src/api\.ts$
+^shrok-[0-9][^/]*-linux-arm64/app/node_modules/simplex-chat/src/api\.ts$
 # The Node binary contains coincidental byte sequences.
-^shrok-0\.1\.0-linux-arm64/node/bin/node$
+^shrok-[0-9][^/]*-linux-arm64/node/bin/node$
 # Node HTTP type examples contain a sample URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/@types/node/http\.d\.ts$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/@types/node/http\.d\.ts$
 # Node HTTPS type examples contain a sample URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/@types/node/https\.d\.ts$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/@types/node/https\.d\.ts$
 # Google auth documentation contains a public example key.
-^shrok-0\.1\.0-linux-x64/app/node_modules/google-auth-library/README\.md$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/google-auth-library/README\.md$
 # Playwright includes a sample URL in its bundled code.
-^shrok-0\.1\.0-linux-x64/app/node_modules/playwright-core/lib/coreBundle\.js$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/playwright-core/lib/coreBundle\.js$
 # SimpleX documentation contains a sample database URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/simplex-chat/README\.md$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/simplex-chat/README\.md$
 # SimpleX declarations contain a sample database URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/simplex-chat/dist/api\.d\.ts$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/simplex-chat/dist/api\.d\.ts$
 # SimpleX API documentation contains a sample database URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
 # SimpleX source documents a sample database URL.
-^shrok-0\.1\.0-linux-x64/app/node_modules/simplex-chat/src/api\.ts$
+^shrok-[0-9][^/]*-linux-x64/app/node_modules/simplex-chat/src/api\.ts$
 # The Node binary contains coincidental byte sequences.
-^shrok-0\.1\.0-linux-x64/node/bin/node$
+^shrok-[0-9][^/]*-linux-x64/node/bin/node$
 # The libvips binary contains a coincidental byte sequence.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips-cpp\.8\.18\.7\.dylib$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips-cpp\.8\.18\.7\.dylib$
 # Node HTTP type examples contain a sample URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/@types/node/http\.d\.ts$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/@types/node/http\.d\.ts$
 # Node HTTPS type examples contain a sample URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/@types/node/https\.d\.ts$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/@types/node/https\.d\.ts$
 # Google auth documentation contains a public example key.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/google-auth-library/README\.md$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/google-auth-library/README\.md$
 # Playwright includes a sample URL in its bundled code.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/playwright-core/lib/coreBundle\.js$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/playwright-core/lib/coreBundle\.js$
 # SimpleX documentation contains a sample database URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/simplex-chat/README\.md$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/simplex-chat/README\.md$
 # SimpleX declarations contain a sample database URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/simplex-chat/dist/api\.d\.ts$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/simplex-chat/dist/api\.d\.ts$
 # SimpleX API documentation contains a sample database URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/simplex-chat/docs/api\.TypeAlias\.DbConfig\.md$
 # SimpleX source documents a sample database URL.
-^shrok-0\.1\.0-macos-arm64/app/node_modules/simplex-chat/src/api\.ts$
+^shrok-[0-9][^/]*-macos-arm64/app/node_modules/simplex-chat/src/api\.ts$
 # The systemd translation catalog contains a coincidental string.
 ^usr/lib/systemd/catalog/systemd\.pt_BR\.catalog$
 # The Debian package index contains package metadata.

@@ -66,7 +66,8 @@ const SAFE_ENV_KEYS = [
   "SHELL",
 ];
 
-const expandHome = (target: string): string =>
+/** `~` and `~/...` resolved against the home folder. */
+export const expandHome = (target: string): string =>
   target === "~" || target.startsWith("~/")
     ? path.join(homedir(), target.slice(2))
     : target;

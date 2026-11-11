@@ -3,7 +3,7 @@
 #
 #   $1/app/       src, skills, package.json and production node_modules, without any local extension files
 #   $1/node/      Node, the version in mise.toml, checked against packaging/checksums.txt
-#   $1/bin/       shrok, and Obscura, checked against packaging/checksums.txt
+#   $1/bin/       shrok, and Obscura, the version in mise.toml, checked against packaging/checksums.txt
 #   $1/lib/       libsimplex and its Node add-on, checked against simplex-chat's pinned hashes
 #   $1/browsers/  Playwright's headless shell, checked against packaging/checksums.txt, unless $2 is "system-browser"
 #
@@ -15,7 +15,7 @@ out=$1
 browser=${2:-bundled}
 root=$(cd "$(dirname "$0")/.." && pwd)
 node_version=$(sed -n 's/^node = "\(.*\)"$/\1/p' "$root/mise.toml")
-obscura_version=v0.2.5
+obscura_version=v$(sed -n 's/^"github:h4ckf0r0day\/obscura" = "\(.*\)"$/\1/p' "$root/mise.toml")
 pnpm_version=$(sed -n 's/.*"packageManager": "pnpm@\(.*\)".*/\1/p' "$root/package.json")
 
 case "$(uname -s)-$(uname -m)" in

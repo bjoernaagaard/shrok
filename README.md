@@ -64,6 +64,7 @@ Shrok reads its settings from the environment.
 | `SHROK_MODEL`, `SHROK_SMALL_MODEL`, `SHROK_CLASSIFIER` | The models, as `provider/model` | chosen by which key is set |
 | `SHROK_MCP_CONFIG` | An `mcp.json` listing MCP servers | `mcp.json` in the data folder |
 | `SHROK_BROWSER` | A Chromium binary to use instead of the bundled one |  |
+| `SHROK_LINKS_FILE` | A text file of links, one per line. Shrok saves each new one and tells you. |  |
 
 Any key can also come from a file. Set `ANTHROPIC_API_KEY_FILE` to the file's path, or use a systemd credential with the same name.
 

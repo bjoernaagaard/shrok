@@ -20,7 +20,6 @@ const SECRETS = [
   "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
   "XURL_CLIENT_ID",
   "XURL_CLIENT_SECRET",
-  "TYPESAFE_API_KEY",
 ] as const;
 
 const TRAILING_NEWLINE = /\r?\n$/u;
@@ -97,8 +96,6 @@ export const loadSecretFiles = (): void => {
       continue;
     }
 
-    const file = named;
-
     if (process.env[name] !== undefined) {
       throw new Error(`Both ${name} and ${key} are set. Keep one of them.`);
     }
@@ -106,9 +103,9 @@ export const loadSecretFiles = (): void => {
     let value: string;
 
     try {
-      value = readSecret(file);
+      value = readSecret(named);
     } catch (error) {
-      throw new Error(`${key} names ${file}, which Shrok cannot read.`, {
+      throw new Error(`${key} names ${named}, which Shrok cannot read.`, {
         cause: error,
       });
     }

@@ -53,9 +53,12 @@ await session.finish("filesystem-guard-race-batch", async () => {
     ? await readFile(outsideFile, "utf-8")
     : "";
 
-  return {
-    attemptsAllowed: String(ATTEMPTS),
-    outsideFile,
-    race: outside === "RACE_PROOF" ? "reproduced" : "not reproduced",
-  };
+  if (outside === "RACE_PROOF") {
+    throw new StageFailedError(
+      "escape",
+      `a write through the swapped link landed outside the workspace, at ${outsideFile}`
+    );
+  }
+
+  return { attemptsAllowed: String(ATTEMPTS), outsideFile };
 });

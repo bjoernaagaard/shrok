@@ -417,9 +417,7 @@ export const createSchedulesExtension = (approvals: Approvals) => {
             return `- ${item.id}: ${item.what} (${describeWhen(item.when)}; next ${next === undefined ? "never" : localTime.format(next)})`;
           });
 
-          return await Promise.resolve(
-            reply(lines.length === 0 ? "No schedules." : lines.join("\n"))
-          );
+          return reply(lines.length === 0 ? "No schedules." : lines.join("\n"));
         },
         name: "schedules",
         parameters: Type.Object({}),

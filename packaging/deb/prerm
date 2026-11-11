@@ -7,6 +7,6 @@ if [ "$1" = remove ]; then
   fi
 
   if command -v apparmor_parser >/dev/null && [ -d /sys/kernel/security/apparmor ]; then
-    apparmor_parser -R /etc/apparmor.d/shrok-bwrap /etc/apparmor.d/shrok-browser >/dev/null 2>&1 || true
+    apparmor_parser -R /etc/apparmor.d/shrok-bwrap >/dev/null 2>&1 || true
   fi
 fi

@@ -1,12 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 
-import type { Approvals } from "./approvals.ts";
-
-interface Call {
-  readonly taskId: number;
-  readonly conversationId: number;
-  readonly callId: string;
-}
+import type { Approvals, Call } from "./approvals.ts";
 
 const MAX_SEEN = 50_000;
 const ABSOLUTE = /https?:\/\/[^\s<>"'`)\]}|]+/giu;

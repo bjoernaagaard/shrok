@@ -32,7 +32,6 @@ ImportCredential=GOOGLE_WORKSPACE_CLI_CLIENT_ID
 ImportCredential=GOOGLE_WORKSPACE_CLI_CLIENT_SECRET
 ImportCredential=XURL_CLIENT_ID
 ImportCredential=XURL_CLIENT_SECRET
-ImportCredential=TYPESAFE_API_KEY
 
 # Shrok stops within 20 s; SIGTERM goes to Shrok, which closes the browser and SimpleX itself.
 KillMode=mixed

@@ -20,7 +20,7 @@ chmod -R go-w "$stage/$name"
 if [ "$(uname -s)" = Linux ]; then
   mkdir -p "$stage/$name/share/systemd" "$stage/$name/share/apparmor"
   cp "$here/systemd/shrok.service" "$stage/$name/share/systemd/"
-  cp "$here/deb/apparmor/shrok-bwrap" "$here/deb/apparmor/shrok-browser" "$stage/$name/share/apparmor/"
+  cp "$here/deb/apparmor/shrok-bwrap" "$stage/$name/share/apparmor/"
 fi
 
 # Builder identities must never become installation-host owners when root extracts the archive.

@@ -121,20 +121,18 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$TYPESAFE_API_KEY" ]; then exit 0; fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then exit 0; fi
           umask "$PRIVATE_UMASK"
           secrets=$(mktemp -d)
           trap 'sudo rm -rf "$secrets"; sudo chown -R "$(id -u):$(id -g)" out/tests' EXIT
           printenv ANTHROPIC_API_KEY >"$secrets/ANTHROPIC_API_KEY"
-          printenv TYPESAFE_API_KEY >"$secrets/TYPESAFE_API_KEY"
           chmod "$PRIVATE_SECRET_MODE" "$secrets"/*
           sudo chown -R "$SHROK_UID:$SHROK_GID" "$secrets"
           mkdir -p out/tests && sudo chown "$SHROK_UID:$SHROK_GID" out/tests && sudo chmod "$PRIVATE_DIRECTORY_MODE" out/tests
           docker run --rm --security-opt seccomp=packaging/oci/seccomp.json --security-opt systempaths=unconfined \
             --security-opt apparmor=shrok-container --tmpfs /tmp --mount "type=bind,src=$secrets,dst=/run/secrets,readonly" \
-            -e ANTHROPIC_API_KEY_FILE=/run/secrets/ANTHROPIC_API_KEY -e TYPESAFE_API_KEY_FILE=/run/secrets/TYPESAFE_API_KEY \
+            -e ANTHROPIC_API_KEY_FILE=/run/secrets/ANTHROPIC_API_KEY \
             -e SHROK_TIME_ZONE=Europe/Copenhagen -e SHROK_LOCALE=en-GB \
             -v "$PWD/out/tests:/opt/shrok/app/test/output" shrok-verify node test/browser-security.ts \
             2>&1 | tee out/browser-security.console.txt
@@ -220,9 +218,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$TYPESAFE_API_KEY" ]; then exit 0; fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then exit 0; fi
           umask "$PRIVATE_UMASK"
           node test/browser-security.ts 2>&1 | tee out/browser-security.console.txt
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

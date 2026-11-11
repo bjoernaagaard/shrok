@@ -24,7 +24,7 @@ cp -R "$app" "$root/opt/shrok"
 chmod -R go-w "$root/opt/shrok"
 ln -s /opt/shrok/bin/shrok "$root/usr/bin/shrok"
 cp "$here/../systemd/shrok.service" "$root/usr/lib/systemd/system/shrok.service"
-cp "$here/apparmor/shrok-bwrap" "$here/apparmor/shrok-browser" "$root/etc/apparmor.d/"
+cp "$here/apparmor/shrok-bwrap" "$root/etc/apparmor.d/"
 
 for script in postinst prerm postrm; do
   install -m 0755 "$here/$script" "$root/DEBIAN/$script"
@@ -32,7 +32,6 @@ done
 
 cat >"$root/DEBIAN/conffiles" <<EOF
 /etc/apparmor.d/shrok-bwrap
-/etc/apparmor.d/shrok-browser
 EOF
 
 cat >"$root/DEBIAN/control" <<EOF

@@ -1,5 +1,3 @@
-import process from "node:process";
-
 import { createModels } from "@earendil-works/pi-ai";
 import type {
   Api,
@@ -16,6 +14,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { withAnthropicClassifier } from "./classifier.ts";
+import { setting } from "./data-dir.ts";
 import { markViewCache } from "./memory/cache.ts";
 
 interface Defaults {
@@ -87,10 +86,10 @@ const BASE_URL_SETTINGS = new Map([
 ]);
 
 const withBaseUrl = (provider: Provider): Provider => {
-  const setting = BASE_URL_SETTINGS.get(provider.id);
-  const baseUrl = setting === undefined ? undefined : process.env[setting];
+  const name = BASE_URL_SETTINGS.get(provider.id);
+  const baseUrl = name === undefined ? undefined : setting(name);
 
-  if (baseUrl === undefined || baseUrl === "") {
+  if (baseUrl === undefined) {
     return provider;
   }
 
@@ -130,15 +129,15 @@ const findDefaults = async (models: Models): Promise<Defaults | undefined> => {
 
 const configuredModel = async <T>(
   models: Models,
-  setting: Setting,
+  key: Setting,
   defaults: Defaults | undefined,
   find: (provider: string, id: string) => T | undefined
 ): Promise<T> => {
-  const name = process.env[setting] ?? defaults?.[setting];
+  const name = setting(key) ?? defaults?.[key];
 
   if (name === undefined) {
     throw new Error(
-      `Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set ${setting} to a provider/model whose key is set.`
+      `Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set ${key} to a provider/model whose key is set.`
     );
   }
 
@@ -146,7 +145,7 @@ const configuredModel = async <T>(
 
   if (slash <= 0) {
     throw new Error(
-      `${setting} must be written as provider/model, such as ${PROVIDER_DEFAULTS[0]?.[setting]}. It is "${name}".`
+      `${key} must be written as provider/model, such as ${PROVIDER_DEFAULTS[0]?.[key]}. It is "${name}".`
     );
   }
 
@@ -157,12 +156,12 @@ const configuredModel = async <T>(
   const model = find(provider, name.slice(slash + 1));
 
   if (model === undefined) {
-    throw new Error(`${setting} names ${name}, which pi-ai doesn't know.`);
+    throw new Error(`${key} names ${name}, which pi-ai doesn't know.`);
   }
 
   if ((await models.checkAuth(provider)) === undefined) {
     throw new Error(
-      `${setting} names ${name}, but provider ${provider} has no credentials. Add its key to secretspec.toml.`
+      `${key} names ${name}, but provider ${provider} has no credentials. Add its key to secretspec.toml.`
     );
   }
 

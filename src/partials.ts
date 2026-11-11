@@ -72,7 +72,6 @@ const PHRASES = new Map<string, string>([
   ["write", "writing a file"],
   ["edit", "editing a file"],
   ["x_read_post", "reading a post on X"],
-  ["x_read_post", "reading a post on X"],
   ["zoom", "remembering"],
 ]);
 

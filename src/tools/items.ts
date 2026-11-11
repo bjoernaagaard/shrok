@@ -21,7 +21,7 @@ export const createItemTools = (items: Items) => [
     execute: async (args) => {
       const saved = items.save({ ...args, tags: args.tags ?? [] }, new Date());
 
-      return await Promise.resolve(text(`Saved as ${saved.workspacePath}`));
+      return text(`Saved as ${saved.workspacePath}`);
     },
     name: "save_item",
     parameters: Type.Object({
@@ -63,17 +63,15 @@ export const createItemTools = (items: Items) => [
     execute: async (args) => {
       const hits = items.search(args.query, SEARCH_LIMIT);
 
-      return await Promise.resolve(
-        text(
-          hits.length === 0
-            ? "No saved item matches."
-            : hits
-                .map(
-                  (hit) =>
-                    `- ${hit.title} (${hit.kind}, id: ${hit.id}, created ${hit.created.slice(0, 10)}, updated ${hit.updated.slice(0, 10)}) ${hit.workspacePath}${hit.source === "" ? "" : ` ${hit.source}`}\n  ${hit.snippet}`
-                )
-                .join("\n")
-        )
+      return text(
+        hits.length === 0
+          ? "No saved item matches."
+          : hits
+              .map(
+                (hit) =>
+                  `- ${hit.title} (${hit.kind}, id: ${hit.id}, created ${hit.created.slice(0, 10)}, updated ${hit.updated.slice(0, 10)}) ${hit.workspacePath}${hit.source === "" ? "" : ` ${hit.source}`}\n  ${hit.snippet}`
+              )
+              .join("\n")
       );
     },
     name: "search_items",

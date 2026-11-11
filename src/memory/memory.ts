@@ -192,13 +192,6 @@ export class Memory {
     return this.#store.message(id)?.date;
   }
 
-  async idle(): Promise<void> {
-    if (this.#running.size > 0) {
-      await Promise.allSettled(this.#running);
-      await this.idle();
-    }
-  }
-
   async close(): Promise<void> {
     this.#closed = true;
     this.#abort.abort();

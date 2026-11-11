@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -31,7 +30,7 @@ import type { Static, TUnsafe } from "typebox";
 import { Value } from "typebox/value";
 
 import { report } from "../events.ts";
-import { safeEnv } from "./sandbox.ts";
+import { expandHome, safeEnv } from "./sandbox.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const CONNECT_RETRY_DELAYS_MS = [250, 1000];
@@ -146,12 +145,6 @@ interface McpCallOptions {
 export interface McpServers {
   readonly tools: ToolRegistration[];
   readonly namespaces: McpNamespace[];
-  /** Calls a tool by its Shrok name, such as `mcp__github__search`. */
-  call: (
-    name: string,
-    args: JsonObject,
-    options: McpCallOptions
-  ) => Promise<McpCallResult>;
   close: () => Promise<void>;
 }
 
@@ -180,11 +173,6 @@ const resolveAll = (
       resolveConfigValue(value, `${where} "${key}"`),
     ])
   );
-
-const expandHome = (value: string): string =>
-  value === "~" || value.startsWith("~/")
-    ? path.join(homedir(), value.slice(2))
-    : value;
 
 const createDefaultTransport =
   (cwd: string): McpTransportFactory =>
@@ -655,7 +643,6 @@ export const connectMcpServers = async (
   }
 
   return {
-    call,
     close: async () => {
       await Promise.allSettled(
         connections.map(async (connection) => {

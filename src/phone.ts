@@ -827,7 +827,7 @@ export const openPhone = async (
 
       // Start under the owner lock, but never hold pairing up for the model's answer.
       const answering = await withOwner(contactId, generation, async () => {
-        await approvals.skipBefore(receivedAt);
+        approvals.skipBefore(receivedAt);
 
         return {
           result: answer(text, `simplex:${itemId}`, sentAt, (next) => {

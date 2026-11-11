@@ -72,7 +72,8 @@ interface PreparedAction<
   readonly payload: JsonObject;
 }
 
-interface Call {
+/** The tool call an approval binds to. */
+export interface Call {
   readonly taskId: number;
   readonly conversationId: number;
   readonly callId: string;
@@ -112,27 +113,24 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS approvals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   call_id TEXT NOT NULL UNIQUE,
   action TEXT NOT NULL,
-  approved INTEGER
-)`;
+  approved INTEGER,
+  created_at INTEGER,
+  asked_at INTEGER,
+  answered_at INTEGER,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  summary TEXT,
+  item_id INTEGER,
+  file_id INTEGER,
+  owner_user INTEGER,
+  owner_contact INTEGER,
+  binding TEXT,
+  state TEXT NOT NULL,
+  uploaded_at INTEGER,
+  delivered_at INTEGER,
+  expires_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS approval_retirement (id INTEGER PRIMARY KEY CHECK (id = 1), task INTEGER NOT NULL);`;
 
-const ADDED_COLUMNS = [
-  ["created_at", "INTEGER"],
-  ["asked_at", "INTEGER"],
-  ["answered_at", "INTEGER"],
-  ["skipped", "INTEGER NOT NULL DEFAULT 0"],
-  ["summary", "TEXT"],
-  ["item_id", "INTEGER"],
-  ["file_id", "INTEGER"],
-  ["owner_user", "INTEGER"],
-  ["owner_contact", "INTEGER"],
-  ["binding", "TEXT"],
-  ["state", "TEXT NOT NULL DEFAULT 'legacy'"],
-  ["uploaded_at", "INTEGER"],
-  ["delivered_at", "INTEGER"],
-  ["expires_at", "INTEGER"],
-] as const;
-
-const ColumnsSchema = Type.Array(Type.Object({ name: Type.String() }));
 const IdSchema = Type.Object({ id: Type.Integer() });
 
 const REQUEST_PREFIX = "/'yes ";
@@ -158,27 +156,11 @@ export class Approvals<
     mkdirSync(this.#details, { mode: 0o700, recursive: true });
     this.#db = new DatabaseSync(file);
     this.#db.exec(SCHEMA);
-
-    const columns = new Set(
-      Value.Parse(
-        ColumnsSchema,
-        this.#db.prepare("PRAGMA table_info(approvals)").all()
-      ).map(({ name }) => name)
-    );
-
-    for (const [name, type] of ADDED_COLUMNS) {
-      if (!columns.has(name)) {
-        this.#db.exec(`ALTER TABLE approvals ADD COLUMN ${name} ${type}`);
-      }
-    }
-
+    // Requests a stopped Shrok left open can never be answered or confirmed now.
     this.#db.exec(`
       UPDATE approvals SET state = 'outcome_unknown' WHERE state = 'executing';
       UPDATE approvals SET state = 'revoked' WHERE state IN ('delivering', 'pending', 'approved');
     `);
-    this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS approval_retirement (id INTEGER PRIMARY KEY CHECK (id = 1), task INTEGER NOT NULL)"
-    );
 
     for (const detail of readdirSync(this.#details)) {
       if (DETAILS_FILE.test(detail)) {
@@ -565,14 +547,12 @@ export class Approvals<
     return row === undefined ? undefined : Value.Parse(IdSchema, row).id;
   }
 
-  async skipBefore(receivedAt: Date): Promise<void> {
+  skipBefore(receivedAt: Date): void {
     for (const [id, waiting] of this.#waiting) {
       if (waiting.createdAt < receivedAt.getTime()) {
         this.#reject(id, "skipped");
       }
     }
-
-    await Promise.resolve();
   }
 
   close(): void {

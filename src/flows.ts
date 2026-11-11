@@ -310,7 +310,7 @@ export const createFlowsExtension = (
 
             run.code ??= readFileSync(fileOf(dir, args.name), "utf-8");
 
-            return await Promise.resolve(run.code);
+            return run.code;
           }, context);
 
           return await runner.execute(

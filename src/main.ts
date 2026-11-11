@@ -5,7 +5,7 @@ import process from "node:process";
 
 import { openBrain } from "./brain.ts";
 import { checkControlSocket, serveControl } from "./control.ts";
-import { dataDir } from "./data-dir.ts";
+import { dataDir, setting } from "./data-dir.ts";
 import { closeEvents, openEvents, record } from "./events.ts";
 import { watchLinks } from "./links.ts";
 import { lockDataDir } from "./lock.ts";
@@ -68,7 +68,7 @@ const notify = async (text: string, unlessSentSince: Date): Promise<void> => {
 
 brain.attach({ notify, sendFile: phone.sendFile });
 
-const linksFile = process.env.SHROK_LINKS_FILE;
+const linksFile = setting("SHROK_LINKS_FILE");
 
 const stopLinks =
   linksFile === undefined ? undefined : watchLinks(linksFile, brain, notify);

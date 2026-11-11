@@ -115,26 +115,11 @@ const fromMarkdown = (id: string, text: string) => {
     throw new Error(`${id}.md has invalid YAML: ${document.errors.join(", ")}`);
   }
 
-  const legacy = !document.has("id") && document.has("saved");
-
-  if (legacy) {
-    // The old saved date is the only recorded timestamp, not a known first-save date.
-    const saved = document.get("saved");
-
-    document.set("id", id);
-    document.set("created", saved);
-    document.set("updated", saved);
-    document.delete("saved");
-  }
-
   const fields = Value.Parse(ItemFieldsSchema, document.toJS());
-
-  const body = match.groups.body ?? "";
 
   return {
     document,
-    item: { ...fields, body: body.trim() },
-    upgraded: legacy ? `---\n${document.toString()}---${body}` : undefined,
+    item: { ...fields, body: (match.groups.body ?? "").trim() },
   };
 };
 
@@ -177,17 +162,10 @@ export class Items {
         try {
           const file = path.join(this.#dir, name);
 
-          const { item, upgraded } = fromMarkdown(
-            id,
-            readFileSync(file, "utf-8")
-          );
+          const { item } = fromMarkdown(id, readFileSync(file, "utf-8"));
 
           if (this.#filenames.has(item.id)) {
             throw new Error(`Duplicate item identifier ${item.id}`);
-          }
-
-          if (upgraded !== undefined) {
-            writeFileSync(file, upgraded);
           }
 
           this.#index(item, name);

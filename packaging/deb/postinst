@@ -11,7 +11,7 @@ if [ "$1" = configure ]; then
 
   # Ubuntu stops bubblewrap and the browser from making user namespaces unless a profile allows it.
   if command -v apparmor_parser >/dev/null && [ -d /sys/kernel/security/apparmor ]; then
-    apparmor_parser -r -W /etc/apparmor.d/shrok-bwrap /etc/apparmor.d/shrok-browser || true
+    apparmor_parser -r -W /etc/apparmor.d/shrok-bwrap || true
   fi
 
   if [ -d /run/systemd/system ]; then

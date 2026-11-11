@@ -7,6 +7,8 @@ import type { Context } from "@earendil-works/chord";
 import { ok } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
+import { FLOWS_FOLDER } from "../flows.ts";
+import { ITEMS_FOLDER } from "../items.ts";
 import { isInside, isSecret } from "./sandbox.ts";
 
 const MAX_WORKSPACE_BYTES = 256 * 1024 * 1024;
@@ -14,6 +16,9 @@ const MAX_WORKSPACE_ENTRIES = 4096;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const ALLOCATION_BYTES = 4096;
 const STAT_BLOCK_BYTES = 512;
+
+/** Folders only Shrok's own tools change, with limits of their own, so they don't count against write and edit. */
+const MANAGED_FOLDERS = new Set([ITEMS_FOLDER, FLOWS_FOLDER, "skills"]);
 
 const isMissing = (error: Error): boolean =>
   "code" in error && error.code === "ENOENT";
@@ -39,6 +44,11 @@ const workspaceUsage = (folder: string) => {
         entry = directory.readSync()
       ) {
         const target = path.join(current, entry.name);
+
+        if (current === folder && MANAGED_FOLDERS.has(entry.name)) {
+          continue;
+        }
+
         const info = lstatSync(target);
 
         entries += 1;

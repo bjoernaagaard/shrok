@@ -37,7 +37,7 @@ sudo systemctl enable --now shrok
 sudo -u shrok shrok pair
 ```
 
-Shrok runs as the user `shrok`, keeps its data in `/var/lib/shrok`, and logs to the journal: `journalctl -u shrok`. The package loads an AppArmor profile selected only by Shrok's systemd service. On Ubuntu 24.04 and later, it lets the service and its children make the user namespaces their sandboxes need. It does not attach to the system bubblewrap executable or grant namespaces to other users. A second, inactive profile replaces the browser attachment used by older packages.
+Shrok runs as the user `shrok`, keeps its data in `/var/lib/shrok`, and logs to the journal: `journalctl -u shrok`. The package loads an AppArmor profile selected only by Shrok's systemd service. On Ubuntu 24.04 and later, it lets the service and its children make the user namespaces their sandboxes need. It does not attach to the system bubblewrap executable or grant namespaces to other users.
 
 ## Docker
 
@@ -92,4 +92,4 @@ Leave it running and use its full path to pair in another terminal, as shown in 
 
 ## CI verification credentials
 
-Before enabling the `verify` workflow, create a GitHub environment named `verification` in the repository's Settings. Require a trusted reviewer, prevent self-review and disable administrator bypass. Put `ANTHROPIC_API_KEY` and `TYPESAFE_API_KEY` only in that environment, not in repository or organization secrets available to branch workflows. Review the exact source commit before approving a run. Both verification jobs require this environment. Model keys are passed only to their browser security steps on manual runs of `main`. Pushes to verification branches run without model keys.
+Before enabling the `verify` workflow, create a GitHub environment named `verification` in the repository's Settings. Require a trusted reviewer, prevent self-review and disable administrator bypass. Put `ANTHROPIC_API_KEY` only in that environment, not in repository or organization secrets available to branch workflows. Review the exact source commit before approving a run. Both verification jobs require this environment. Model keys are passed only to their browser security steps on manual runs of `main`. Pushes to verification branches run without model keys.

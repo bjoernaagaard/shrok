@@ -48,8 +48,10 @@ interface Outbox {
 }
 
 export interface Brain {
-  /** Answers once per `requestId`; asking again with the same ID returns the stored answer. */
-  /** `show` receives the answer's progress, while the model works on it. */
+  /**
+   * Answers once per `requestId`; asking again with the same ID returns the stored answer. `show` receives the
+   * answer's progress, while the model works on it.
+   */
   answer: (
     text: string,
     requestId: string,
