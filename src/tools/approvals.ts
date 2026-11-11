@@ -53,6 +53,8 @@ interface PreparedAction<
     | "schedule-create-v1"
     | "web-open-v1"
     | "browser-type-v1"
+    | "gmail-send-v1"
+    | "program-run-v1"
     | LocalAdapter;
   readonly tool:
     | "save_flow"
@@ -63,6 +65,8 @@ interface PreparedAction<
     | "web_fetch"
     | "browser_open"
     | "browser_type"
+    | "gmail_send"
+    | "run_program"
     | LocalTool;
   readonly summary: string;
   readonly arguments: JsonObject;

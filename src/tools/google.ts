@@ -13,7 +13,13 @@ import { programJson, typed } from "./programs.ts";
 const DEFAULT_MAX = 10;
 const MAX_SEARCH_RESULTS = 50;
 const BODY_CHARS = 20_000;
-const MAX_CAPTION_DESCRIPTION = 600;
+const MAX_CAPTION_TEXT = 600;
+
+/** Quoted, so the text cannot pose as more of the approval sentence, and cut to fit the request's caption. */
+const captionText = (text: string): string =>
+  `${JSON.stringify(text.slice(0, MAX_CAPTION_TEXT))}${text.length > MAX_CAPTION_TEXT ? " (cut here; the rest is in the attached details)" : ""}`;
+
+const ProfileResponse = Type.Object({ emailAddress: Type.String() });
 
 const Address = Type.Object({
   email: Type.String(),
@@ -272,15 +278,77 @@ export const createGoogleTools = (
   }),
   defineTool({
     description:
-      "Send an email or a reply now. Only when the user asked to send; it waits for his /yes.",
+      "Send an email or a reply now. Only when the user asked to send; it waits for the owner's /yes on the exact email and the account it sends from.",
     execute: async (args, api, context) => {
-      const sent = await programJson(
-        "gws",
-        SentResponse,
-        api.env,
-        composeArgs(args, false),
-        context
+      let sent: Static<typeof SentResponse> | undefined;
+
+      await approvals.execute(
+        api,
+        async () => {
+          // Read again after /yes: a different login or a changed thread fails the comparison, so the email
+          // that goes out is the one the owner approved.
+          const { emailAddress: account } = await programJson(
+            "gws",
+            ProfileResponse,
+            api.env,
+            ["gmail", "users", "getProfile", "--params", '{"userId":"me"}'],
+            context
+          );
+
+          const original =
+            args.reply_to === undefined
+              ? undefined
+              : await readMessage(api.env, args.reply_to, context);
+
+          const to =
+            original === undefined
+              ? (args.to ?? "")
+              : [
+                  ...original.replyTo,
+                  ...(args.to === undefined ? [] : [args.to]),
+                ].join(", ");
+
+          const what =
+            original === undefined
+              ? `an email with the subject ${JSON.stringify(args.subject ?? "")}`
+              : `a reply in the thread ${JSON.stringify(original.subject)}, quoting its last message,`;
+
+          return {
+            adapter: "gmail-send-v1" as const,
+            arguments: { ...args },
+            expectedState: {
+              original:
+                original === undefined
+                  ? null
+                  : {
+                      from: original.from,
+                      replyTo: original.replyTo,
+                      subject: original.subject,
+                      threadId: original.threadId,
+                    },
+            },
+            identity: { account, program: "gws" },
+            payload: { argv: composeArgs(args, false) },
+            resource: { to },
+            summary: `send ${what} from ${account} to ${JSON.stringify(to)}, saying ${captionText(args.body)}`,
+            tool: "gmail_send" as const,
+          };
+        },
+        async (action) => {
+          sent = await programJson(
+            "gws",
+            SentResponse,
+            api.env,
+            action.payload.argv,
+            context
+          );
+        },
+        context.abortSignal
       );
+
+      if (sent === undefined) {
+        throw new Error("The approved email did not return a sent message.");
+      }
 
       return typed(SentOutput, { messageId: sent.id, threadId: sent.threadId });
     },
@@ -348,7 +416,7 @@ export const createGoogleTools = (
           resource: { calendar: "default" },
           // Quoted, so a title or location cannot pose as more of the sentence, and with the description,
           // so nothing the event will hold stays out of the message.
-          summary: `add ${JSON.stringify(args.summary)} to your calendar from ${args.start} to ${args.end}${args.location === undefined ? "" : `, at ${JSON.stringify(args.location)}`}, with no guests, ${args.description === undefined ? "and no description" : `with the description ${JSON.stringify(args.description.slice(0, MAX_CAPTION_DESCRIPTION))}${args.description.length > MAX_CAPTION_DESCRIPTION ? " (cut here; the rest is in the attached details)" : ""}`}`,
+          summary: `add ${JSON.stringify(args.summary)} to your calendar from ${args.start} to ${args.end}${args.location === undefined ? "" : `, at ${JSON.stringify(args.location)}`}, with no guests, ${args.description === undefined ? "and no description" : `with the description ${captionText(args.description)}`}`,
           tool: "calendar_add" as const,
         }),
         async (action) => {

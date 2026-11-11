@@ -11,4 +11,4 @@ Each `x_read_post` costs the user about $0.005 from their prepaid X credits, so 
 2. If the shared preview holds the full text, save the post from the preview.
 3. Otherwise read it with `x_read_post` and the link, and save its author, date and full text.
 
-Posting, replying, liking and following are blocked, and a generic yes can't unblock them. Ask the owner to do those in X.
+To post, reply, like or follow, use `run_program` with `xurl`, only when the owner asked. Each command waits for his /yes on the exact command.

@@ -91,8 +91,6 @@ const READ_ONLY = new Set([
 const EXIT_CAPABLE = new Set([
   ...[...allowed].filter((tool) => !READ_ONLY.has(tool)),
   ...gated,
-  "gmail_send",
-  "run_program",
 ]);
 
 const Row = Type.Object({ record: Type.String() });

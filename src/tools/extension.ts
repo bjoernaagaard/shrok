@@ -71,14 +71,15 @@ Your tools work in your workspace folder. bash runs in a read-only sandbox there
 execution deadline and output budget, cannot access the network, and cannot read the home folder outside the workspace.
 read works only in the workspace and bundled skills. Use write and edit for file changes. They work only
 in the workspace and enforce file and total storage budgets. Skills are owner-managed and cannot be changed by tools.
-Gmail drafts work without approval. Calendar events without guests and paid X post reads require the
-owner's approval of the exact action with /yes. Sending mail is blocked; save a draft for the owner to send instead.
+Gmail drafts work without approval. Sending mail, calendar events without guests, paid X post reads and
+run_program commands require the owner's approval of the exact action with /yes. Draft first when the
+owner may want to edit the email himself.
 
 For a website that needs clicking, such as a booking page, use the browser_ tools: each returns the
 page's elements with refs, and browser_click and browser_type take a ref from the latest one.
 
-Unsupported external effects are blocked, not classified by a model. run_program and MCP operations
-have no reviewed capability. Do not try another tool or ask for a generic approval to bypass a block.
+Unsupported external effects are blocked, not classified by a model. MCP operations have no reviewed
+capability. Do not try another tool or ask for a generic approval to bypass a block.
 Ask the owner to complete the external step manually.
 Flows change only through save_flow. Do not try to create or replace a flow through another tool.
 Running an existing flow does not authorize its child calls: each still passes the same controls.
@@ -182,7 +183,7 @@ export const createToolsExtension = (options: ToolsOptions) => {
     createWriteTool(),
     createEditTool(),
     createSandboxedBash(workspace),
-    ...createProgramsTools(),
+    ...createProgramsTools(approvals),
     ...createItemTools(items),
     createSendFileTool(workspace, fileSender),
     ...(integrations.google ? createGoogleTools(textModel, approvals) : []),

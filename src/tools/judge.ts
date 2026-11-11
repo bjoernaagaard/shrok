@@ -2,7 +2,9 @@ import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { Value } from "typebox/value";
 
 import { admitPaidTool, TRANSFORM_TEXT_PARAMETERS } from "./budget.ts";
-import { explain } from "./explain.ts";
+
+const BLOCKED =
+  "This operation has no reviewed capability and is blocked. A model judgment or generic approval cannot authorize it. The owner must complete it manually. Do not try another tool to bypass this restriction.";
 
 const ALLOWED = new Set([
   "bash",
@@ -19,9 +21,11 @@ const ALLOWED = new Set([
   "gmail_draft",
   "gmail_read",
   "gmail_search",
+  "gmail_send",
   "pi.codemode.models.classify",
   "read",
   "run_flow",
+  "run_program",
   "save_flow",
   "save_item",
   "schedule",
@@ -41,9 +45,7 @@ export const capabilityProblem = (
   name: string,
   allowed?: ReadonlySet<string>
 ): string | undefined =>
-  ALLOWED.has(name) || (allowed?.has(name) ?? false)
-    ? undefined
-    : explain(name);
+  ALLOWED.has(name) || (allowed?.has(name) ?? false) ? undefined : BLOCKED;
 
 /**
  * Guard the executor as well as ToolTask.beforeTool. A replay-safe tool can resume

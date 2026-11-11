@@ -32,7 +32,8 @@ sequenceDiagram
 | Adds a calendar event, sets a reminder or saves a flow | Yes, for the exact event, time or script |
 | Clicks a button that books, buys, pays, signs up or sends | Yes |
 | Reads a post on X, which costs X credits | Yes |
-| Sends an email, or posts, replies or likes on X | It can't. It saves an email as a Gmail draft for you to send. |
+| Sends an email | Yes, for the exact email and the Google account it sends from |
+| Runs a `gws` or `xurl` command, such as posting on X | Yes, for the exact command |
 
 ## What you need
 

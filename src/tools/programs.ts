@@ -10,6 +10,7 @@ import { Value } from "typebox/value";
 
 import { dataDir } from "../data-dir.ts";
 import { integrations } from "../settings.ts";
+import type { Approvals } from "./approvals.ts";
 import { safeEnv } from "./sandbox.ts";
 
 const PROGRAMS = {
@@ -116,9 +117,9 @@ export const programJson = async <T extends TSchema>(
   );
 };
 
-const createProgramsTool = () =>
+const createProgramsTool = (approvals: Approvals) =>
   defineTool({
-    description: `Run a program that uses the user's own login, outside the bash sandbox, with arguments only (no shell). Programs:\n${NAMES.map((name) => `- ${name}: ${PROGRAMS[name].description}`).join("\n")}`,
+    description: `Run a program that uses the user's own login, outside the bash sandbox, with arguments only (no shell). Every run waits for the owner's /yes on the exact command, so prefer a typed tool when one fits. Programs:\n${NAMES.map((name) => `- ${name}: ${PROGRAMS[name].description}`).join("\n")}`,
     execute: async (args, api, context) => {
       const { env } = api;
 
@@ -126,25 +127,62 @@ const createProgramsTool = () =>
         throw new Error("run_program needs an execution environment.");
       }
 
-      const result = await env.exec(
-        [args.program, ...args.args],
-        {
-          cwd: PROGRAM_DIR,
-          env: programEnv(args.program),
-          inheritEnv: false,
-          onOutput: (text) => {
-            api.output(text);
-          },
-          timeout: TIMEOUT_SECONDS,
+      let exitCode: number | undefined;
+
+      await approvals.execute(
+        api,
+        () => ({
+          adapter: "program-run-v1" as const,
+          arguments: { args: args.args, program: args.program },
+          expectedState: {},
+          identity: { program: args.program },
+          payload: { argv: [args.program, ...args.args] },
+          resource: { program: args.program },
+          summary: `run ${args.program} with your login, outside the sandbox, exactly as ${JSON.stringify([args.program, ...args.args])}`,
+          tool: "run_program" as const,
+        }),
+        async (action) => {
+          let outputBytes = 0;
+
+          const result = await env.exec(
+            action.payload.argv,
+            {
+              cwd: PROGRAM_DIR,
+              env: programEnv(args.program),
+              inheritEnv: false,
+              onOutput: (text) => {
+                outputBytes += Buffer.byteLength(text, "utf-8");
+
+                if (outputBytes > MAX_OUTPUT_BYTES) {
+                  // The execution environment kills the child tree when this callback throws.
+                  throw new Error(
+                    `${args.program} exceeded its output byte limit.`
+                  );
+                }
+
+                api.output(text);
+              },
+              timeout: TIMEOUT_SECONDS,
+            },
+            context
+          );
+
+          if (!result.ok) {
+            throw new Error(
+              `${args.program} did not run: ${result.error.message}`
+            );
+          }
+
+          ({ exitCode } = result.value);
         },
-        context
+        context.abortSignal
       );
 
-      if (!result.ok) {
-        throw new Error(`${args.program} did not run: ${result.error.message}`);
+      if (exitCode === undefined) {
+        throw new Error("The approved command did not run.");
       }
 
-      return { isError: result.value.exitCode !== 0 };
+      return { isError: exitCode !== 0 };
     },
     name: "run_program",
     parameters: Type.Object({
@@ -156,5 +194,5 @@ const createProgramsTool = () =>
     }),
   });
 
-export const createProgramsTools = () =>
-  NAMES.length === 0 ? [] : [createProgramsTool()];
+export const createProgramsTools = (approvals: Approvals) =>
+  NAMES.length === 0 ? [] : [createProgramsTool(approvals)];

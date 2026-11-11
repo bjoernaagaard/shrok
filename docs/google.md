@@ -1,6 +1,6 @@
 # Google: Gmail and Calendar
 
-With Google set up, Shrok can search and read your mail, save drafts, list your calendar and add events. It can't send mail. It saves a draft for you to send from Gmail.
+With Google set up, Shrok can search and read your mail, save drafts, send mail, list your calendar and add events. Before it sends an email, it asks you on your phone to approve that exact email and the account it sends from.
 
 Shrok uses the [Google Workspace CLI](https://www.npmjs.com/package/@googleworkspace/cli), `gws`, and offers Google only when `gws` is installed and both of its keys are set.
 
