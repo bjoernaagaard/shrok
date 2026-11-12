@@ -98,11 +98,14 @@ export const openBrain = async (
   const items = new Items(layout);
   const seenUrls = new SeenUrls(approvals);
 
+  const catalog = new ToolCatalog();
+
   const browser = createBrowserTools(
     path.join(layout.dataDir, "browser", "state.json"),
     publicWeb,
     approvals,
-    seenUrls
+    seenUrls,
+    () => approvals.waitingFor(catalog.pageTools())
   );
 
   await browser.check();
@@ -116,7 +119,6 @@ export const openBrain = async (
   );
 
   const fileSender = Promise.withResolvers<SendFile>();
-  const catalog = new ToolCatalog();
   const remembering = createMemory(memory);
   const schedules = createSchedules();
   const codemode = createCodemode(mcp.namespaces);
@@ -255,7 +257,7 @@ export const openBrain = async (
     // Only the owner's own words make addresses safe to open.
     seenUrls.note(text);
 
-    return await submit(
+    const answered = await submit(
       {
         at: sentAt,
         from: "owner",
@@ -267,6 +269,9 @@ export const openBrain = async (
       },
       show
     );
+
+    // An answer can end with a tool, such as send_file, and no words; the owner still gets a reply.
+    return answered === "" ? "Done." : answered;
   };
 
   return {

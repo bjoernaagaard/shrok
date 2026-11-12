@@ -22,11 +22,13 @@ const KIND_OF: Readonly<Record<From, keyof typeof KINDS>> = {
   schedule: "schedule",
 };
 
-const KIND_OF_TAG = new Map<string, keyof typeof KINDS>([
-  [TAGS.owner, KIND_OF.owner],
-  [TAGS.schedule, KIND_OF.schedule],
-  [TAGS.event, KIND_OF.event],
-]);
+const isFrom = (key: string): key is From => key in TAGS;
+
+const KIND_OF_TAG = new Map<string, keyof typeof KINDS>(
+  Object.entries(TAGS).flatMap(([from, tag]) =>
+    isFrom(from) ? [[tag, KIND_OF[from]] as const] : []
+  )
+);
 
 const TOOL_OUTPUT_CHARS = 30_000;
 

@@ -292,6 +292,14 @@ export class Approvals {
     const owner = await phone.owner();
     const where = { context, env: this.#env };
     const action = await prepare(where);
+
+    // Shutdown may have started while the action prepared, and the database closes with it.
+    if (this.#closing) {
+      throw new Error(
+        "Shrok is shutting down, so it cannot ask for approval now."
+      );
+    }
+
     const boundAction = Approvals.#boundOf(action);
     const bound = JSON.stringify(boundAction);
 

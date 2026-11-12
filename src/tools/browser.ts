@@ -662,9 +662,6 @@ const gone = async (page: Page, ref: string) =>
     `Ref ${ref} is not on the page any more: the page changed since that read. Use a ref from this one.\n\n${await snapshot(page)}`
   );
 
-/** The tools whose requests act on the page the browser has open, which must stay as it is until he answers. */
-const PAGE_TOOLS = new Set(["browser_click", "browser_type"]);
-
 /** A text field as the owner approves typing into it: its name, label and kind. */
 const fieldOf = async (field: Locator) =>
   await field.evaluate((node) => ({
@@ -696,11 +693,11 @@ export const createBrowserTools = (
   stateFile: string,
   publicWeb: PublicWeb,
   approvals: Approvals,
-  seenUrls: SeenUrls
+  seenUrls: SeenUrls,
+  /** Whether a request about the open page waits for the owner, so the browser must not close when idle. */
+  pageNeeded: () => boolean
 ) => {
-  const session = new Session(stateFile, publicWeb, () =>
-    approvals.waitingFor(PAGE_TOOLS)
-  );
+  const session = new Session(stateFile, publicWeb, pageNeeded);
 
   /** A snapshot result, whose links count as seen. */
   const shown = (value: string) => {
@@ -809,6 +806,7 @@ export const createBrowserTools = (
       }),
     },
     {
+      holdsPage: true,
       phrase: "clicking on the page",
       tool: defineTool({
         description:
@@ -886,6 +884,7 @@ export const createBrowserTools = (
       }),
     },
     {
+      holdsPage: true,
       phrase: "typing on the page",
       tool: defineTool({
         description:
