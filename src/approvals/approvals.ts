@@ -281,6 +281,12 @@ export class Approvals {
     context: Context,
     prepare: Prepare
   ): Promise<Outcome> {
+    if (this.#closing) {
+      throw new Error(
+        "Shrok is shutting down, so it cannot ask for approval now."
+      );
+    }
+
     this.#prune();
     const phone = await this.#phone.promise;
     const owner = await phone.owner();
@@ -511,6 +517,15 @@ export class Approvals {
     return this.#running.size > 0;
   }
 
+  /** Forgets every standing permission and revokes every open request, as when a new phone becomes the owner. */
+  reset(): void {
+    for (const id of this.#waiting.keys()) {
+      this.#close(id, "revoked");
+    }
+
+    this.#db.exec("DELETE FROM grants");
+  }
+
   /**
    * Revokes the open requests and shows it on their messages, so no stale /yes stays on the phone, and waits for
    * the stopped actions to settle before the database closes.
@@ -693,7 +708,7 @@ export class Approvals {
         const stopped = signal.aborted;
 
         this.#close(id, stopped ? "stopped" : "changed");
-        await this.#tell(
+        void this.#tell(
           stopped
             ? `[Request ${id} approved, but stopped] ${summary}\n\nIt was stopped before it started, so nothing was done.`
             : `[Request ${id} approved, but not done] ${summary}\n\nIt was not done because ${String(error)}. Ask again if it is still wanted.`,
@@ -720,7 +735,7 @@ export class Approvals {
 
         this.#setState(id, "completed");
         this.#show(waiting, "done");
-        await this.#tell(
+        void this.#tell(
           `[Request ${id} approved and done] ${summary}\n\nResult:\n${resultText(result)}`,
           `approval:${id}:done`
         );
@@ -729,7 +744,7 @@ export class Approvals {
 
         this.#setState(id, "outcome_unknown");
         this.#show(waiting, stopped ? "stopped" : "failed");
-        await this.#tell(
+        void this.#tell(
           `[Request ${id} approved, but it ${stopped ? "was stopped while running" : "failed"}] ${summary}\n\nError: ${String(error)}\n\nCheck what actually happened before trying again.`,
           `approval:${id}:${stopped ? "stopped" : "failed"}`
         );

@@ -1,6 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 
 import { FRAME, TAGS } from "../conversation.ts";
+import type { From } from "../conversation.ts";
 import type { NewLogMessage } from "./store.ts";
 
 /** The kinds of logged message, with what each holds, as the memory prompt lists them. */
@@ -15,10 +16,16 @@ export const KINDS = {
   user: "the user's words",
 } as const;
 
+const KIND_OF: Readonly<Record<From, keyof typeof KINDS>> = {
+  event: "event",
+  owner: "user",
+  schedule: "schedule",
+};
+
 const KIND_OF_TAG = new Map<string, keyof typeof KINDS>([
-  [TAGS.owner, "user"],
-  [TAGS.event, "event"],
-  [TAGS.schedule, "schedule"],
+  [TAGS.owner, KIND_OF.owner],
+  [TAGS.schedule, KIND_OF.schedule],
+  [TAGS.event, KIND_OF.event],
 ]);
 
 const TOOL_OUTPUT_CHARS = 30_000;
@@ -72,8 +79,10 @@ export const toLogMessages = (
 
   if (message.role === "user") {
     const text = userText(message.content);
+
     // Logged by who it is from: only the owner's own messages are his words.
-    const kind = KIND_OF_TAG.get(FRAME.exec(text)?.groups?.tag ?? "") ?? "user";
+    const kind =
+      KIND_OF_TAG.get(FRAME.exec(text)?.groups?.tag ?? "") ?? "event";
 
     add(kind, text.replace(FRAME, ""), message.timestamp);
   } else if (message.role === "assistant") {

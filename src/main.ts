@@ -77,7 +77,11 @@ const notify = async (text: string, unlessSentSince: Date): Promise<void> => {
 approvals.attach(phone.approvalPhone, async (outcome, requestId) => {
   const at = new Date();
 
-  await notify(await brain.report(outcome, requestId, at), at);
+  const answer = await brain.report(outcome, requestId, at);
+
+  if (answer !== "") {
+    await notify(answer, at);
+  }
 });
 
 brain.attach({ notify, sendFile: phone.sendFile });
@@ -85,7 +89,9 @@ brain.attach({ notify, sendFile: phone.sendFile });
 const linksFile = setting("SHROK_LINKS_FILE");
 
 const stopLinks =
-  linksFile === undefined ? undefined : watchLinks(linksFile, brain, notify);
+  linksFile === undefined
+    ? undefined
+    : watchLinks(linksFile, brain, notify, phone.hasOwner);
 
 const stopControl = await serveControl(dataDir, phone);
 

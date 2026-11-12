@@ -10,6 +10,7 @@ const MARKDOWN_LINK = /\]\((?<link>[^\s)]+)\)/gu;
 const SNAPSHOT_LINK = /\/url: (?<link>\S+)/gu;
 const PAGE_URL = /^URL: (?<url>\S+)$/mu;
 const TRAILING = /[.,;:!?'"]+$/u;
+const LEADING_WWW = /^www\./u;
 
 const canonical = (url: string, base?: string): string | undefined => {
   try {
@@ -20,6 +21,8 @@ const canonical = (url: string, base?: string): string | undefined => {
     }
 
     parsed.hash = "";
+    // A leading www. names the same site, and models often add or drop it.
+    parsed.hostname = parsed.hostname.replace(LEADING_WWW, "");
 
     return parsed.href;
   } catch {

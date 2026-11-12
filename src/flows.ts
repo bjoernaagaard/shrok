@@ -167,7 +167,7 @@ whenever a flow below fits. Pass its input as a JSON object; the script reads it
 
 When the user asks for a flow, or a task he repeats has no flow, write one and save it with save_flow, which
 waits for his /yes unless he allowed saving flows for good. A flow script is a code mode script with these rules:
-- Call the supported typed tools (${flowTools.join(", ")}). They return parsed JSON. A flow cannot run another flow or bypass a blocked operation.
+- Call the supported typed tools (${flowTools.join(", ")}). Typed tools return parsed JSON and the others text. A tool that needs the owner's /yes returns { askedOwner } and does nothing yet, so a flow should stop and say so. A flow cannot run another flow or bypass a blocked operation.
   Every child call passes the same capability checks as your own.
 - A flow has no model of its own: for a step that needs judgment or writing, call transform_text, or
   models.classify for a choice, a score or a yes or no. Classify with

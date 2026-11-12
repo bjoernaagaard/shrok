@@ -16,7 +16,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import type { Layout } from "../layout.ts";
-import { isInside, isSecret, isShrokRecord } from "../paths.ts";
+import { isInside, isSecret } from "../paths.ts";
 import type { ShrokTool } from "./policy.ts";
 import { BUNDLED_SKILLS } from "./skills.ts";
 
@@ -273,7 +273,7 @@ export const createWorkspaceFiles = (layout: Layout) => {
       return "That folder holds the user's credentials. Shrok may not open it.";
     }
 
-    if (isShrokRecord(target, layout.dataDir, workspace)) {
+    if (isInside(target, layout.dataDir) && !isInside(target, workspace)) {
       return "That holds Shrok's own records and keys. Tools may open only the workspace.";
     }
 
@@ -287,6 +287,12 @@ export const createWorkspaceFiles = (layout: Layout) => {
 
     if (!WRITING_TOOLS.has(tool)) {
       return undefined;
+    }
+
+    if (
+      [layout.bashHome, layout.bashTemp].some((dir) => isInside(target, dir))
+    ) {
+      return "That folder is bash's own scratch space, outside the file budget. Write elsewhere in the workspace.";
     }
 
     return layout.managed.find(({ dir }) => isInside(target, dir))?.block;

@@ -662,8 +662,8 @@ const gone = async (page: Page, ref: string) =>
     `Ref ${ref} is not on the page any more: the page changed since that read. Use a ref from this one.\n\n${await snapshot(page)}`
   );
 
-/** The tools whose requests are about the page the browser has open. */
-const PAGE_TOOLS = new Set(["browser_click", "browser_open", "browser_type"]);
+/** The tools whose requests act on the page the browser has open, which must stay as it is until he answers. */
+const PAGE_TOOLS = new Set(["browser_click", "browser_type"]);
 
 /** A text field as the owner approves typing into it: its name, label and kind. */
 const fieldOf = async (field: Locator) =>
@@ -924,12 +924,10 @@ export const createBrowserTools = (
                   try {
                     await approvedField.fill(args.text);
                   } catch (error) {
-                    const reason =
-                      error instanceof Error
-                        ? error.message.split("\n")[0]
-                        : String(error);
-
-                    return `That did not work: ${reason}. Use browser_click for checkboxes, radios and buttons.\n\n${await snapshot(now)}`;
+                    throw new Error(
+                      "That field takes no typing. Use browser_click for checkboxes, radios and buttons.",
+                      { cause: error }
+                    );
                   }
 
                   return await settledText(now);

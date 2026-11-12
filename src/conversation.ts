@@ -104,8 +104,8 @@ export const ask = async (
     };
   }
 
-  const text = answerText(await conversation.answerOf(settled.answer));
-
-  // An answer can end with a tool, such as send_file, and no words: the phone still needs a reply to keep.
-  return { answered: true, text: text === "" ? "Done." : text };
+  return {
+    answered: true,
+    text: answerText(await conversation.answerOf(settled.answer)),
+  };
 };

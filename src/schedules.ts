@@ -227,7 +227,7 @@ const PROMPT = `# Schedules
 
 schedule makes Shrok act at a time: a reminder, or a task to do then. It fires on ${timeZone} time, once on a
 date, weekly on some days (optionally every few weeks), monthly on days of the month, or daily, and survives
-restarts. When it fires you get a message that starts with [Scheduled], followed by what you wrote: do it, and write
+restarts. When it fires you get what you wrote, framed by <due>: do it, and write
 what the user should read, since your answer is sent to his phone. A line saying when the schedule fired, starting
 with ⏰, is put above your answer, so don't repeat the time or add an alarm emoji.
 
@@ -318,14 +318,15 @@ export const createSchedules = () => {
             at: due,
             from: "schedule",
             requestId: `schedule:${task.id}:${due}`,
-            text: `[Scheduled] ${task.input.what}`,
+            text: task.input.what,
           },
           context
         );
 
-        const done = answer.answered
-          ? answer.text
-          : `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`;
+        const done =
+          answer.answered && answer.text !== ""
+            ? answer.text
+            : `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`;
 
         await runtime.commit(
           () => ({

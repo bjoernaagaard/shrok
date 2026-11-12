@@ -114,12 +114,6 @@ export const isSecret = (target: string): boolean =>
   isImportedSecret(target) ||
   SECRET_DIRS.some((secret) => isInside(target, expandHome(secret)));
 
-export const isShrokRecord = (
-  target: string,
-  dataDir: string,
-  workspace: string
-): boolean => isInside(target, dataDir) && !isInside(target, workspace);
-
 export const safeEnv = () => {
   const env: Record<string, string> = {};
 

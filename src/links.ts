@@ -9,6 +9,9 @@ import { shareMessage } from "./shares.ts";
 const CHECK_MS = 10 * 60 * 1000;
 const MAX_TRIES = 5;
 
+/** How often the watcher looks again for a paired phone, before it may save anything. */
+const PAIRED_CHECK_MS = 15_000;
+
 const LABEL = "🔗 _From Save Link_";
 
 const linksIn = (text: string): string[] => {
@@ -34,7 +37,8 @@ const tryId = (url: string, attempt: number): string =>
 export const watchLinks = (
   file: string,
   brain: Pick<Brain, "answer" | "settled">,
-  notify: Notify
+  notify: Notify,
+  paired: () => Promise<boolean>
 ): (() => void) => {
   const stopped = new AbortController();
 
@@ -113,6 +117,19 @@ export const watchLinks = (
 
   const loop = async (): Promise<void> => {
     while (!stopped.signal.aborted) {
+      // A link may need the owner's /yes, such as a paid read, and his answer, so wait until a phone is paired.
+      // oxlint-disable-next-line no-await-in-loop
+      if (!(await paired())) {
+        try {
+          // oxlint-disable-next-line no-await-in-loop
+          await sleep(PAIRED_CHECK_MS, undefined, { signal: stopped.signal });
+        } catch {
+          break;
+        }
+
+        continue;
+      }
+
       try {
         // oxlint-disable-next-line no-await-in-loop
         await check();

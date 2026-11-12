@@ -573,6 +573,8 @@ export const openPhone = async (
         }
 
         ownerGeneration = Symbol("owner");
+        // The new owner did not grant or see any of these.
+        approvals.reset();
 
         for (const cancel of liveReplies) {
           cancel();
@@ -867,7 +869,9 @@ export const openPhone = async (
       clearInterval(ticker);
 
       if (!closing && generation === ownerGeneration) {
-        await live.end(answered);
+        // An answer can end with a tool, such as send_file, and no words; a reply must stay, so the message
+        // counts as answered after a restart.
+        await live.end(answered === "" ? "Done." : answered);
       }
     } catch (error) {
       clearInterval(ticker);
