@@ -104,8 +104,7 @@ export const openBrain = async (
     path.join(layout.dataDir, "browser", "state.json"),
     publicWeb,
     approvals,
-    seenUrls,
-    () => approvals.holdsPage()
+    seenUrls
   );
 
   await browser.check();

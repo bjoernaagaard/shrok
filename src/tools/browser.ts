@@ -693,11 +693,11 @@ export const createBrowserTools = (
   stateFile: string,
   publicWeb: PublicWeb,
   approvals: Approvals,
-  seenUrls: SeenUrls,
-  /** Whether a request about the open page waits for the owner, so the browser must not close when idle. */
-  pageNeeded: () => boolean
+  seenUrls: SeenUrls
 ) => {
-  const session = new Session(stateFile, publicWeb, pageNeeded);
+  const session = new Session(stateFile, publicWeb, () =>
+    approvals.holdsPage()
+  );
 
   /** A snapshot result, whose links count as seen. */
   const shown = (value: string) => {
