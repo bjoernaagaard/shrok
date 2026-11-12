@@ -3,6 +3,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 
 import { quoted } from "../approvals/approvals.ts";
 import type { Approvals, Call, Outcome } from "../approvals/approvals.ts";
+import { publicUrl } from "./public-web.ts";
 
 const MAX_SEEN = 50_000;
 const ABSOLUTE = /https?:\/\/[^\s<>"'`)\]}|]+/giu;
@@ -105,6 +106,9 @@ export class SeenUrls {
     context: Context,
     open: Open
   ): Promise<Outcome> {
+    // Only public http and https pages open at all, so anything else is refused before asking the owner.
+    publicUrl(url);
+
     const href = canonical(url);
 
     if (href !== undefined && this.#urls.has(href)) {
