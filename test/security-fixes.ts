@@ -25,8 +25,8 @@ const dotenv = path.join(session.dataDir, "workspace", ".env");
 
 const SHOP_HTML = `<html><head><title>Test shop</title></head><body><h1>Test shop</h1><label>Name <input id="name"></label><button onclick="document.title='${ordered}';document.querySelector('h1').textContent='${ordered}'">Place your order</button><form onsubmit="document.title='${submitted}';return false"><label>Email <input name="email"></label><button>Continue</button></form></body></html>`;
 
-/** httpbin.org takes URL-safe base64 only with its padding. */
-const SHOP_URL = `https://httpbin.org/base64/${Buffer.from(SHOP_HTML).toString("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
+/** httpbun.com serves a URL-safe base64 page as HTML. httpbin.org now serves it as plain text, which a browser shows as source. */
+const SHOP_URL = `https://httpbun.com/base64/${Buffer.from(SHOP_HTML).toString("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
 
 interface Turn {
   readonly first: Message;
@@ -34,21 +34,24 @@ interface Turn {
   readonly runs: ToolRun[];
 }
 
-/** Sends `text` and returns Shrok's first answer: an approval request or a reply. */
+/**
+ * Sends `text` and waits for the model's reply to it. A request it made along the way arrives before that reply,
+ * and is the turn's `first` message; without one, the reply is.
+ */
 const turn = async (stage: string, text: string): Promise<Turn> => {
   const before = session.toolResults().length;
   const since = await session.send(text);
+  const reply = await session.waitFor(stage, since, STEP_BUDGET_MS, isReply);
 
-  const first = await session.waitFor(
-    stage,
-    since,
-    STEP_BUDGET_MS,
-    (reply) => approvalId(reply) !== undefined || isReply(reply)
-  );
+  const request = session.messages
+    .slice(since)
+    .find(
+      (m) => m.direction === "from Shrok" && approvalId(m.text) !== undefined
+    );
 
   return {
-    first,
-    id: approvalId(first.text),
+    first: request ?? reply,
+    id: request === undefined ? undefined : approvalId(request.text),
     runs: session.toolResults().slice(before),
   };
 };
@@ -181,14 +184,15 @@ const shop = async () => {
     "Type Alice into the Name field on that page, and don't press anything."
   );
 
-  if (typed.id === undefined || !typed.first.text.includes("httpbin.org")) {
+  if (typed.id === undefined || !typed.first.text.includes("httpbun.com")) {
     fail("shop-type", `typing on a new site did not ask: ${typed.first.text}`);
   }
 
+  // /always allows typing on this site from now on, so the next change must not ask.
   const approved = await session.answer(
     "shop-type",
     typed.id ?? "",
-    "yes",
+    "always",
     STEP_BUDGET_MS
   );
 

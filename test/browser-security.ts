@@ -16,10 +16,11 @@ const MAX_ATTEMPTS = 3;
 const PROXY_FLAG = /--proxy-server=(?<proxy>http:\/\/127\.0\.0\.1:\d+)/u;
 
 const PROBE_HTML =
-  '<html><head><title>Subresource probe</title></head><body><h1>Probe page</h1><img src="http://img.localtest.me:58123/pixel.png"><script>fetch("http://api.localtest.me:58123/data").catch(() => {});</script></body></html>';
+  '<html><head><title>Subresource probe</title></head><body><h1>Probe page</h1><img src="https://img.localtest.me:58123/pixel.png"><script>fetch("https://api.localtest.me:58123/data").catch(() => {});</script></body></html>';
 
-/** httpbin.org takes URL-safe base64 only with its padding. */
-const PROBE_URL = `http://httpbin.org/base64/${Buffer.from(PROBE_HTML).toString("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
+/** httpbun.com serves a URL-safe base64 page as HTML. httpbin.org now serves it as plain text, which a browser shows as source. */
+// An https page, so the browser asks the proxy for its https subresources instead of blocking them as mixed content.
+const PROBE_URL = `https://httpbun.com/base64/${Buffer.from(PROBE_HTML).toString("base64").replaceAll("+", "-").replaceAll("/", "_")}`;
 
 interface Check {
   readonly url: string;

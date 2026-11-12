@@ -408,7 +408,7 @@ export class Session {
   async answer(
     stage: string,
     id: string,
-    decision: "yes" | "no",
+    decision: "yes" | "no" | "always",
     budget: number
   ): Promise<Message> {
     for (let attempt = 1; ; attempt += 1) {
