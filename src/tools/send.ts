@@ -4,9 +4,9 @@ import path from "node:path";
 import { defineTool } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 
+import { isInside, isSecret } from "../paths.ts";
 import { text as reply } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
-import { isInside, isSecret } from "./sandbox.ts";
 
 export type SendFile = (file: string, caption: string) => Promise<void>;
 

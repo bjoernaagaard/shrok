@@ -4,27 +4,36 @@ import { T } from "@simplex-chat/types";
 import type { ChatEvent } from "@simplex-chat/types";
 import type { api } from "simplex-chat";
 
-import { clockTime } from "./time.ts";
+import { clockTime } from "../time.ts";
 import type {
   ApprovalDelivery,
   ApprovalMessage,
   ApprovalOwner,
   ApprovalRequest,
   RequestState,
-} from "./tools/approvals.ts";
+  Verdict,
+} from "./approvals.ts";
+
+/** A command the owner taps to answer a request, as SimpleX shows it: /'yes 4'. */
+export const answerCommand = (verdict: Verdict, id: number): string =>
+  `/'${verdict} ${id}'`;
 
 const REQUEST_PREFIX = "/'yes ";
 
-/** A request's message: the commands that answer it, tappable in SimpleX, then what it would do. */
+/** A request's message: the commands that answer it, then what it would do. */
 const requestText = ({ grants, id, summary }: ApprovalRequest): string => {
-  const always = grants.length === 0 ? "" : `   /'always ${id}'`;
+  const commands = [
+    answerCommand("yes", id),
+    answerCommand("no", id),
+    ...(grants.length === 0 ? [] : [answerCommand("always", id)]),
+  ].join("   ");
 
   const lasting =
     grants.length === 0
       ? ""
       : `\n\n/always also allows from now on: ${grants.join("; ")}.`;
 
-  return `${REQUEST_PREFIX}${id}'   /'no ${id}'${always}\n\n*Shrok wants to:*\n${summary}${lasting}\n\nFull details are attached. The request stays open until you answer.`;
+  return `${commands}\n\n*Shrok wants to:*\n${summary}${lasting}\n\nFull details are attached. The request stays open until you answer.`;
 };
 
 /** What the owner reads for each way a request ends. */

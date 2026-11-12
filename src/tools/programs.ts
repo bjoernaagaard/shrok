@@ -8,14 +8,14 @@ import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
+import { textOutcome } from "../approvals/approvals.ts";
+import type { Approvals } from "../approvals/approvals.ts";
 import { dataDir } from "../data-dir.ts";
 import { INTEGRATIONS } from "../integrations.ts";
 import type { Program } from "../integrations.ts";
+import { safeEnv } from "../paths.ts";
 import { integrations } from "../settings.ts";
-import { textOutcome } from "./approvals.ts";
-import type { Approvals } from "./approvals.ts";
 import type { ShrokTool } from "./policy.ts";
-import { safeEnv } from "./sandbox.ts";
 
 const TIMEOUT_SECONDS = 120;
 const MAX_OUTPUT_BYTES = 1024 * 1024;

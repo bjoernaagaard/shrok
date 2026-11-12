@@ -16,7 +16,7 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 import { report as recordEvent } from "../events.ts";
-import { text, typed } from "./output.ts";
+import { text, typed } from "../tools/output.ts";
 
 export interface ApprovalOwner {
   readonly userId: number;

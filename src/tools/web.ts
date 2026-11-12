@@ -12,7 +12,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import { textOutcome } from "./approvals.ts";
+import { textOutcome } from "../approvals/approvals.ts";
 import { text as textResult } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
 import { wordsArg } from "./policy.ts";

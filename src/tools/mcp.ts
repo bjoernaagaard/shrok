@@ -30,7 +30,7 @@ import type { Static, TUnsafe } from "typebox";
 import { Value } from "typebox/value";
 
 import { report } from "../events.ts";
-import { expandHome, safeEnv } from "./sandbox.ts";
+import { expandHome, safeEnv } from "../paths.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const CONNECT_RETRY_DELAYS_MS = [250, 1000];

@@ -2,13 +2,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { defineExtension, section } from "@earendil-works/pi-durable";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 
+import { APPROVALS_PROMPT } from "../approvals/approvals.ts";
+import type { Approvals } from "../approvals/approvals.ts";
 import type { Items } from "../items.ts";
 import { managedNames } from "../layout.ts";
 import type { Layout } from "../layout.ts";
 import { integrations } from "../settings.ts";
 import { SHARES_PROMPT } from "../shares.ts";
-import { APPROVALS_PROMPT } from "./approvals.ts";
-import type { Approvals } from "./approvals.ts";
 import { BROWSER_PROMPT } from "./browser.ts";
 import { createGoogleTools, GOOGLE_PROMPT } from "./google.ts";
 import { createItemTools } from "./items.ts";

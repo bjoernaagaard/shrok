@@ -9,10 +9,10 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Type } from "typebox";
 import type { Static } from "typebox";
 
+import { Asked, quoted, typedOutcome } from "../approvals/approvals.ts";
+import type { Approvals } from "../approvals/approvals.ts";
 import type { Layout } from "../layout.ts";
 import { timeZone } from "../settings.ts";
-import { Asked, quoted, typedOutcome } from "./approvals.ts";
-import type { Approvals } from "./approvals.ts";
 import { typed } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
 import { programJson } from "./programs.ts";

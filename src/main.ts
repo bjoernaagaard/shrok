@@ -5,6 +5,7 @@ import process from "node:process";
 
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
+import { Approvals } from "./approvals/approvals.ts";
 import { openBrain } from "./brain.ts";
 import { checkControlSocket, serveControl } from "./control.ts";
 import { dataDir } from "./data-dir.ts";
@@ -14,7 +15,6 @@ import { watchLinks } from "./links.ts";
 import { lockDataDir } from "./lock.ts";
 import { openPhone } from "./phone.ts";
 import { setting } from "./settings.ts";
-import { Approvals } from "./tools/approvals.ts";
 
 const OWNER_ONLY_UMASK = 0o077;
 const OWNER_ONLY_FOLDER_MODE = 0o700;

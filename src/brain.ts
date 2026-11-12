@@ -9,6 +9,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
+import type { Approvals } from "./approvals/approvals.ts";
 import { createCodemode } from "./codemode.ts";
 import { ask } from "./conversation.ts";
 import type { From } from "./conversation.ts";
@@ -26,7 +27,6 @@ import type { ShowProgress } from "./partials.ts";
 import { createSchedules } from "./schedules.ts";
 import type { Notify } from "./schedules.ts";
 import { mcpConfig } from "./settings.ts";
-import type { Approvals } from "./tools/approvals.ts";
 import { createBrowserTools } from "./tools/browser.ts";
 import { createTools } from "./tools/extension.ts";
 import { createGuard } from "./tools/guard.ts";

@@ -1,8 +1,8 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 
-import { quoted } from "./approvals.ts";
-import type { Approvals, Call, Outcome } from "./approvals.ts";
+import { quoted } from "../approvals/approvals.ts";
+import type { Approvals, Call, Outcome } from "../approvals/approvals.ts";
 
 const MAX_SEEN = 50_000;
 const ABSOLUTE = /https?:\/\/[^\s<>"'`)\]}|]+/giu;

@@ -23,16 +23,16 @@ import type {
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
+import { quoted, textOutcome } from "../approvals/approvals.ts";
+import type { Approvals } from "../approvals/approvals.ts";
 import { report } from "../events.ts";
+import { safeEnv } from "../paths.ts";
 import { browserPath, locale, timeZone } from "../settings.ts";
-import { quoted, textOutcome } from "./approvals.ts";
-import type { Approvals } from "./approvals.ts";
 import { text } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
 import { wordsArg } from "./policy.ts";
 import type { PublicWeb } from "./public-web.ts";
 import { publicUrl } from "./public-web.ts";
-import { safeEnv } from "./sandbox.ts";
 import type { SeenUrls } from "./seen-urls.ts";
 
 const IDLE_MS = 10 * 60 * 1000;

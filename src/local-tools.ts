@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { Approvals } from "./tools/approvals.ts";
+import type { Approvals } from "./approvals/approvals.ts";
 import type { createBrowserTools } from "./tools/browser.ts";
 import type { CallPolicy, ShrokTool } from "./tools/policy.ts";
 

@@ -16,8 +16,8 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import type { Layout } from "../layout.ts";
+import { isInside, isSecret, isShrokRecord } from "../paths.ts";
 import type { ShrokTool } from "./policy.ts";
-import { isInside, isSecret, isShrokRecord } from "./sandbox.ts";
 import { BUNDLED_SKILLS } from "./skills.ts";
 
 const MAX_WORKSPACE_BYTES = 256 * 1024 * 1024;

@@ -1,8 +1,8 @@
 import { defineTool } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 
-import { Asked, typedOutcome } from "./approvals.ts";
-import type { Approvals } from "./approvals.ts";
+import { Asked, typedOutcome } from "../approvals/approvals.ts";
+import type { Approvals } from "../approvals/approvals.ts";
 import type { ShrokTool } from "./policy.ts";
 import { programJson } from "./programs.ts";
 

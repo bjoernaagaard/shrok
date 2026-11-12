@@ -25,10 +25,10 @@ import { createCodemodeTool } from "@earendil-works/pi-durable/codemode";
 import type { CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
 import { Type } from "typebox";
 
+import { quoted, textOutcome } from "./approvals/approvals.ts";
+import type { Approvals } from "./approvals/approvals.ts";
 import { isCalibrated } from "./classifier.ts";
 import type { Layout } from "./layout.ts";
-import { quoted, textOutcome } from "./tools/approvals.ts";
-import type { Approvals } from "./tools/approvals.ts";
 import { text } from "./tools/output.ts";
 import type { ShrokTool, ToolCatalog } from "./tools/policy.ts";
 import { registrations, wordsArg } from "./tools/policy.ts";

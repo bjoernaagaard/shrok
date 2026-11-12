@@ -5,21 +5,22 @@ import path from "node:path";
 import { CC, T } from "@simplex-chat/types";
 import { api, bot, core, util } from "simplex-chat";
 
-import {
-  deliverApproval,
-  isApprovalRequestText,
-  outcomeText,
-} from "./approval-delivery.ts";
-import { report } from "./events.ts";
-import type { Layout } from "./layout.ts";
-import type { Progress } from "./partials.ts";
-import { shareMessage } from "./shares.ts";
 import type {
   ApprovalPhone,
   Approvals,
   Decision,
   Verdict,
-} from "./tools/approvals.ts";
+} from "./approvals/approvals.ts";
+import {
+  answerCommand,
+  deliverApproval,
+  isApprovalRequestText,
+  outcomeText,
+} from "./approvals/delivery.ts";
+import { report } from "./events.ts";
+import type { Layout } from "./layout.ts";
+import type { Progress } from "./partials.ts";
+import { shareMessage } from "./shares.ts";
 
 type ChatApi = api.ChatApi;
 
@@ -668,7 +669,7 @@ export const openPhone = async (
       return;
     }
 
-    const choices = waiting.map((waitingId) => `/'${verb} ${waitingId}'`);
+    const choices = waiting.map((waitingId) => answerCommand(verb, waitingId));
 
     await say(
       contactId,

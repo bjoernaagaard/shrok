@@ -19,7 +19,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { report } from "../events.ts";
-import { PROJECT_BIN, safeEnv } from "./sandbox.ts";
+import { PROJECT_BIN, safeEnv } from "../paths.ts";
 
 /**
  * Address space that is not the public internet and that the sandbox runtime's guard leaves to us. The guard
