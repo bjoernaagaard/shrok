@@ -1,10 +1,11 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { Context, JsonValue } from "@earendil-works/chord";
-import { StringEnum, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { Type } from "typebox";
 import type { Static } from "typebox";
 
 import type { Layout } from "../layout.ts";
@@ -419,7 +420,7 @@ export const createGoogleTools = (
         name: "gmail_modify",
         parameters: Type.Object({
           action: Type.Optional(
-            StringEnum(["archive", "mark_read", "mark_unread"])
+            Type.Enum(["archive", "mark_read", "mark_unread"])
           ),
           id: Type.String({ description: "The message id" }),
           labels_to_add: Type.Optional(Type.Array(Type.String())),

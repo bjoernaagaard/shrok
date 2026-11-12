@@ -1,10 +1,9 @@
 import { mkdirSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { CC, T } from "@simplex-chat/types";
-import sharp from "sharp";
-import { api, bot, util } from "simplex-chat";
+import { api, bot, core, util } from "simplex-chat";
 
 import { deliverApproval } from "./approval-delivery.ts";
 import { report } from "./events.ts";
@@ -126,15 +125,6 @@ const ANSWERED = new Set<T.MsgContent["type"]>([
 const UNSAFE_FILE_CHARS = /[^\w.-]+/gu;
 const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|heic)$/iu;
 
-/** SimpleX carries an image's preview inside the message, so it must stay small. */
-const PREVIEW_SIZES = [
-  { pixels: 160, quality: 40 },
-  { pixels: 120, quality: 30 },
-  { pixels: 96, quality: 25 },
-] as const;
-
-const MAX_PREVIEW_BYTES = 12_000;
-
 const isAnswered = (item: T.ChatItem): boolean =>
   item.content.type === "rcvMsgContent" &&
   ANSWERED.has(item.content.msgContent.type);
@@ -160,25 +150,14 @@ const isOwner = (contact: T.Contact): boolean =>
   "shrokOwner" in contact.customData &&
   contact.customData.shrokOwner === true;
 
-/** `apiGetChat` is untyped in simplex-chat 7.1; this checks the one field Shrok reads. */
-const hasChatItems = (value: unknown): value is { chatItems: T.ChatItem[] } =>
-  typeof value === "object" &&
-  value !== null &&
-  "chatItems" in value &&
-  Array.isArray(value.chatItems);
-
 const recentItems = async (
   chat: ChatApi,
   contactId: number,
   count: number
 ): Promise<T.ChatItem[]> => {
-  const found: unknown = await chat.apiGetChat(
-    T.ChatType.Direct,
-    contactId,
-    count
-  );
+  const found = await chat.apiGetChat(T.ChatType.Direct, contactId, count);
 
-  return hasChatItems(found) ? found.chatItems : [];
+  return found.chatItems;
 };
 
 const sentSince = (item: T.ChatItem, text: string, since: Date): boolean =>
@@ -314,30 +293,16 @@ const liveText = (progress: Progress, startedAt: number): string => {
   return progress.text === "" ? status : `${progress.text}\n\n${status}`;
 };
 
-/** A small JPEG for SimpleX to show inline, or none when the image can't be read, such as HEIC. */
+/** A small preview for SimpleX to show inline, or none when the image can't be read, such as HEIC. */
 const imagePreview = async (file: string): Promise<string | undefined> => {
-  for (const { pixels, quality } of PREVIEW_SIZES) {
-    let jpeg: Buffer;
-
-    try {
-      // oxlint-disable-next-line no-await-in-loop -- each smaller size is tried only if the last was too big
-      jpeg = await sharp(file)
-        .rotate()
-        .resize(pixels, pixels, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality })
-        .toBuffer();
-    } catch {
-      return undefined;
-    }
-
-    const encoded = jpeg.toString("base64");
-
-    if (encoded.length <= MAX_PREVIEW_BYTES) {
-      return `data:image/jpg;base64,${encoded}`;
-    }
+  try {
+    return await core.resizeImage(
+      await readFile(file),
+      core.ImageSize.MessagePreview
+    );
+  } catch {
+    return undefined;
   }
-
-  return undefined;
 };
 
 type Route =

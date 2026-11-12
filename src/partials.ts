@@ -1,12 +1,11 @@
-import type { Context } from "@earendil-works/chord";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { watchEvents } from "@earendil-works/pi-durable";
+import type { Context } from "@earendil-works/chord/context";
+import { LiveDoc } from "@earendil-works/pi-durable";
 import type {
-  AgentEvent,
-  AgentEventStream,
   ConversationId,
+  DocumentWatch,
   Harness,
   JsonObject,
+  LiveState,
   SubmissionId,
 } from "@earendil-works/pi-durable";
 
@@ -18,20 +17,29 @@ export interface Progress {
 
 export type ShowProgress = (progress: Progress) => void;
 
-const blockTexts = (message: AssistantMessage): string[] =>
-  message.content.map((block) => (block.type === "text" ? block.text : ""));
-
 /** The words the phone shows for a tool call, such as "reading your calendar". */
 export type PhraseOf = (tool: string, args: JsonObject) => string;
 
+type StreamedMessage = NonNullable<
+  NonNullable<LiveState["generation"]>["message"]
+>;
+
+/**
+ * Follows the conversation's live state and tells each listening request how its answer is coming along: the text
+ * so far, the tool running now, and how many tools ran.
+ */
 export class Partials {
   readonly #phraseOf: PhraseOf;
   readonly #listeners = new Map<SubmissionId, ShowProgress>();
+  /** The arguments of the tool calls streamed in the current run, by call ID. */
+  readonly #arguments = new Map<string, JsonObject>();
+  /** The tool calls of the current run that already counted as a step. */
+  readonly #started = new Set<string>();
+  #run: SubmissionId | undefined;
   #running: readonly SubmissionId[] = [];
-  #blocks: string[] = [];
+  #text = "";
   #activity: string | undefined;
-  #steps = 0;
-  #stream: AgentEventStream | undefined;
+  #watch: DocumentWatch<LiveState> | undefined;
 
   constructor(phraseOf: PhraseOf) {
     this.#phraseOf = phraseOf;
@@ -42,14 +50,19 @@ export class Partials {
     conversationId: ConversationId,
     context: Context
   ): Promise<void> {
-    const stream = await watchEvents(harness, conversationId, context);
+    const watch = await harness.watchDoc(LiveDoc, conversationId, context);
 
-    stream.start(async (events) => {
-      for (const event of events) {
-        this.#apply(event);
+    if (watch === undefined) {
+      throw new Error("The conversation has no live state to follow.");
+    }
+
+    this.#apply(watch.value);
+    watch.start(async (call) => {
+      if (call.kind === "value") {
+        this.#apply(call.value);
       }
     });
-    this.#stream = stream;
+    this.#watch = watch;
   }
 
   listen(submission: SubmissionId, show: ShowProgress): void {
@@ -65,57 +78,61 @@ export class Partials {
   }
 
   async close(): Promise<void> {
-    await this.#stream?.stop();
+    await this.#watch?.stop();
   }
 
-  #apply(event: AgentEvent): void {
-    if (event.type === "snapshot") {
-      this.#running = event.run?.inputs ?? [];
-    } else if (event.type === "run_start") {
-      this.#running = event.inputs;
-      this.#blocks = [];
+  #apply(live: Readonly<LiveState>): void {
+    this.#running = live.run?.inputs ?? [];
+
+    const [run] = this.#running;
+
+    if (run !== this.#run) {
+      this.#run = run;
+      this.#arguments.clear();
+      this.#started.clear();
+      this.#text = "";
       this.#activity = undefined;
-      this.#steps = 0;
-    } else if (event.type === "run_end") {
-      this.#running = [];
-    } else if (event.type === "tool_execution_start") {
-      this.#activity = this.#phraseOf(event.toolName, event.args);
-      this.#steps += 1;
-      this.#show();
-    } else if (
-      event.type === "message_start" &&
-      event.message.role === "assistant"
-    ) {
-      this.#blocks = blockTexts(event.message);
-    } else if (event.type === "message_update") {
-      for (const change of event.changes) {
-        if (change.type === "message") {
-          this.#blocks = blockTexts(change.message);
-        } else if (change.type === "text_start" || change.type === "block") {
-          this.#blocks[change.contentIndex] =
-            change.block.type === "text" ? change.block.text : "";
-        } else if (change.type === "text_delta") {
-          this.#blocks[change.contentIndex] =
-            `${this.#blocks[change.contentIndex] ?? ""}${change.delta}`;
-        }
-      }
-
-      this.#show();
     }
-  }
 
-  #show(): void {
+    const message = live.generation?.message;
+
+    if (message !== undefined) {
+      this.#read(message);
+    }
+
+    for (const slot of live.tools ?? []) {
+      if (slot.status !== "pending" && !this.#started.has(slot.callId)) {
+        this.#started.add(slot.callId);
+        this.#activity = this.#phraseOf(
+          slot.name,
+          this.#arguments.get(slot.callId) ?? {}
+        );
+      }
+    }
+
     const progress: Progress = {
       activity: this.#activity,
-      steps: this.#steps,
-      text: this.#blocks
-        .filter((block) => block.trim() !== "")
-        .join("\n\n")
-        .trim(),
+      steps: this.#started.size,
+      text: this.#text,
     };
 
     for (const input of this.#running) {
       this.#listeners.get(input)?.(progress);
     }
+  }
+
+  /** The streamed answer's text, and the arguments of the tool calls it makes. */
+  #read(message: Readonly<StreamedMessage>): void {
+    const texts: string[] = [];
+
+    for (const block of message.content) {
+      if (block.type === "text" && block.text.trim() !== "") {
+        texts.push(block.text);
+      } else if (block.type === "toolCall") {
+        this.#arguments.set(block.id, block.arguments);
+      }
+    }
+
+    this.#text = texts.join("\n\n").trim();
   }
 }

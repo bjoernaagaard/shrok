@@ -1,5 +1,5 @@
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 
 import { Asked, typedOutcome } from "./approvals.ts";
 import type { Approvals } from "./approvals.ts";

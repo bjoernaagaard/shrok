@@ -1,8 +1,9 @@
 allowBuilds:
   "@google/genai": false
   protobufjs: false
-  # Prebuilt binaries come from @img/sharp-*. The script only compiles from source.
-  sharp: false
+  # sandbox-runtime's Windows sandbox SDK brings these in; Shrok runs only on macOS and Linux, where it never loads them.
+  koffi: false
+  node-pty: false
 
 # sandbox-runtime pins zod 3, which has a memory-exhaustion advisory fixed only in zod 4.6.6.
 # sandbox-runtime allows node-forge ^1.4.0; 1.4.0 has GHSA-86w9-cpqp-85rv (RSA PKCS#1 v1.5

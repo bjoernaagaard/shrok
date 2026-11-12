@@ -1,5 +1,5 @@
-import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
@@ -255,7 +255,7 @@ export const createPlaceTools = (): ShrokTool[] => [
       name: "travel_time",
       parameters: Type.Object({
         from: Type.String(),
-        mode: StringEnum(["car", "bike", "foot"]),
+        mode: Type.Enum(["car", "bike", "foot"]),
         to: Type.String(),
       }),
       replay: "safe",

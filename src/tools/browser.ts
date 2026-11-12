@@ -9,7 +9,6 @@ import {
 import path from "node:path";
 import process from "node:process";
 
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import { chromium } from "playwright-core";
 import type {
@@ -21,6 +20,7 @@ import type {
   Page,
   Request,
 } from "playwright-core";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { report } from "../events.ts";

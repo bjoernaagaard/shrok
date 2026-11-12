@@ -1,8 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 
 import { text as reply } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";

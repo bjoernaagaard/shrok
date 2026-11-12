@@ -3,7 +3,7 @@ import { lstatSync, opendirSync, realpathSync } from "node:fs";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { getOrThrow, ok } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";

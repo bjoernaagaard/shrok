@@ -12,27 +12,26 @@
     "fix": "ultracite fix"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.81",
-    "@earendil-works/chord": "^1.4.0",
-    "@earendil-works/pi-ai": "^1.4.0",
-    "@earendil-works/pi-codemode": "1.4.0",
-    "@earendil-works/pi-durable": "^1.4.0",
-    "@earendil-works/pi-mcp": "^1.4.0",
-    "@llamaindex/liteparse": "2.17.0",
-    "@simplex-chat/types": "7.1.0-beta.6.2",
-    "playwright-core": "^1.64.1",
-    "sharp": "^0.35.5",
-    "simplex-chat": "7.1.0-beta.6.6",
-    "typebox": "1.4.3",
+    "@anthropic-ai/sandbox-runtime": "^0.0.82",
+    "@earendil-works/chord": "^1.5.2",
+    "@earendil-works/pi-ai": "^1.5.2",
+    "@earendil-works/pi-codemode": "1.5.2",
+    "@earendil-works/pi-durable": "^1.5.2",
+    "@earendil-works/pi-mcp": "^1.5.2",
+    "@llamaindex/liteparse": "2.18.0",
+    "@simplex-chat/types": "7.1.0-beta.9.1",
+    "playwright-core": "^1.65.0",
+    "simplex-chat": "7.1.0-beta.10.2",
+    "typebox": "1.4.6",
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "knip": "^6.42.1",
-    "oxfmt": "^0.74.0",
-    "oxlint": "^1.89.0",
-    "oxlint-tsgolint": "^7.0.2005",
-    "ultracite": "8.0.2"
+    "@types/node": "^26.6.6",
+    "knip": "^6.45.0",
+    "oxfmt": "^0.78.0",
+    "oxlint": "^1.93.0",
+    "oxlint-tsgolint": "^7.0.2006",
+    "ultracite": "8.1.1"
   },
   "devEngines": {
     "packageManager": {

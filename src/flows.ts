@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { Type } from "@earendil-works/pi-ai";
 import type { ClassifierApi, ClassifierModel } from "@earendil-works/pi-ai";
 import {
   defineDoc,
@@ -24,6 +23,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createCodemodeTool } from "@earendil-works/pi-durable/codemode";
 import type { CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
+import { Type } from "typebox";
 
 import { isCalibrated } from "./classifier.ts";
 import type { Layout } from "./layout.ts";

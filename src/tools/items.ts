@@ -1,5 +1,5 @@
-import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 
 import { ITEM_KINDS, SEARCH_QUERY_MAX_CHARS } from "../items.ts";
 import type { Items } from "../items.ts";
@@ -44,7 +44,7 @@ export const createItemTools = (items: Items): ShrokTool[] => [
               "The existing item identifier when updating, including changing its title or source. Omit for a new item.",
           })
         ),
-        kind: StringEnum(ITEM_KINDS),
+        kind: Type.Enum(ITEM_KINDS),
         source: Type.Optional(
           Type.String({
             description: "The link it came from",

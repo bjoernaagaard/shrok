@@ -3,7 +3,8 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { JsonObject } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Type } from "typebox";

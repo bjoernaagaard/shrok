@@ -4,8 +4,8 @@ import path from "node:path";
 import process from "node:process";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { copyJson } from "@earendil-works/chord";
-import type { JsonValue } from "@earendil-works/chord";
+import { copyJson } from "@earendil-works/chord/json";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type {
   ImageContent,
   JsonObject,

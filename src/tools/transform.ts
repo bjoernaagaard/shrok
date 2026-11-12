@@ -1,6 +1,6 @@
-import { Type } from "@earendil-works/pi-ai";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 
 import { typed } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";

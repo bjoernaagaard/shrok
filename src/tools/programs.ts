@@ -1,10 +1,10 @@
 import { Buffer } from "node:buffer";
 import process from "node:process";
 
-import type { Context } from "@earendil-works/chord";
-import { StringEnum, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
@@ -28,8 +28,8 @@ const integrationOf = (program: Program) =>
   INTEGRATIONS.find((each) => each.program === program);
 
 /** The installed and configured programs. */
-const PROGRAMS: readonly Program[] = INTEGRATIONS.flatMap(
-  ({ name, program }) => (integrations.has(name) ? [program] : [])
+const PROGRAMS: readonly Program[] = INTEGRATIONS.flatMap(({ name, program }) =>
+  integrations.has(name) ? [program] : []
 );
 
 const programEnv = (program: Program): Record<string, string> => {
@@ -171,7 +171,7 @@ export const createProgramsTools = (approvals: Approvals): ShrokTool[] =>
                 description:
                   "Arguments, one per item, exactly as the program takes them",
               }),
-              program: StringEnum(PROGRAMS),
+              program: Type.Enum(PROGRAMS),
             }),
           }),
         },

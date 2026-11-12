@@ -1,4 +1,3 @@
-import { Type } from "@earendil-works/pi-ai";
 import type { Message } from "@earendil-works/pi-ai";
 import {
   defineExtension,
@@ -7,6 +6,7 @@ import {
   hook,
   section,
 } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 
 import { PROMPT } from "../prompt.ts";
 import { localTime } from "../time.ts";

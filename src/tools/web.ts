@@ -1,6 +1,5 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { OutputBuffer } from "@earendil-works/chord/output";
-import { Type } from "@earendil-works/pi-ai";
 import type {
   Api,
   Model,
@@ -10,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { textOutcome } from "./approvals.ts";

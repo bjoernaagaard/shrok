@@ -1,4 +1,3 @@
-import { Type } from "@earendil-works/pi-ai";
 import {
   AssistantEntry,
   defineDoc,
@@ -7,6 +6,7 @@ import {
   defineTool,
   section,
 } from "@earendil-works/pi-durable";
+import { Type } from "typebox";
 import type { Static } from "typebox";
 import { Value } from "typebox/value";
 
