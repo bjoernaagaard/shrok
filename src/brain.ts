@@ -16,7 +16,6 @@ import type { Answer, From } from "./conversation.ts";
 import { createFlows } from "./flows.ts";
 import { Items } from "./items.ts";
 import type { Layout } from "./layout.ts";
-import { loadLocalTools } from "./local-tools.ts";
 import { markViewCache } from "./memory/cache.ts";
 import { createMemory } from "./memory/extension.ts";
 import { Memory } from "./memory/memory.ts";
@@ -24,6 +23,8 @@ import { MemoryStore } from "./memory/store.ts";
 import { createShrokModels } from "./models.ts";
 import { Partials } from "./partials.ts";
 import type { ShowProgress } from "./partials.ts";
+import { pluginApi } from "./plugin-api.ts";
+import { loadPlugins } from "./plugins.ts";
 import { createSchedules } from "./schedules.ts";
 import type { Notify } from "./schedules.ts";
 import { mcpConfig } from "./settings.ts";
@@ -109,7 +110,13 @@ export const openBrain = async (
 
   await browser.check();
 
-  const local = await loadLocalTools({ approvals, browser });
+  const plugins = await loadPlugins(
+    layout,
+    pluginApi({ approvals, browser, layout })
+  );
+
+  /** Where skills come from: the owner's own, then the bundled ones, then each plugin's. */
+  const skillDirs = [layout.skills, BUNDLED_SKILLS, ...plugins.skillDirs];
 
   const memory = new Memory(
     new MemoryStore(path.join(layout.dataDir, "memory.sqlite")),
@@ -128,9 +135,10 @@ export const openBrain = async (
     items,
     layout,
     mcpTools: mcp.tools,
-    moreTools: [...browser.tools, ...local.tools],
+    moreTools: [...browser.tools, ...plugins.tools],
     publicWeb,
     seenUrls,
+    skillDirs,
     smallModel,
   });
 
@@ -148,7 +156,7 @@ export const openBrain = async (
     ...codemode.policies,
     ...tools.tools,
     ...flows.tools,
-    ...(local.policies ?? []),
+    ...plugins.policies,
   ]);
 
   const guard = createGuard(catalog);
@@ -261,10 +269,7 @@ export const openBrain = async (
         at: sentAt,
         from: "owner",
         requestId,
-        text: expandSkillCommand(
-          text,
-          loadSkills([layout.skills, BUNDLED_SKILLS]).skills
-        ),
+        text: expandSkillCommand(text, loadSkills(skillDirs).skills),
       },
       show
     );

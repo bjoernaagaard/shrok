@@ -115,6 +115,19 @@ for each key, such as ANTHROPIC_API_KEY
   4. a line in secrets.env, which must be readable only by Shrok's user (chmod 600)
 ```
 
+## Plugins
+
+You can add your own tools without changing Shrok. A plugin is a folder in the `plugins` folder of Shrok's data folder, with a `plugin.ts` that exports `createPlugin` and, if it has any, its own skills. Shrok loads every plugin when it starts, and it gives each one the API it builds on, so a plugin works the same with every kind of install.
+
+```text
+~/Library/Application Support/Shrok/plugins/
+└── fresha/
+    ├── plugin.ts        export const createPlugin: CreatePlugin = (api) => ({ tools: [...] })
+    └── skills/fresha/SKILL.md
+```
+
+`src/plugin-api.ts` describes the API, and its `CreatePlugin` type checks a plugin's file. Only you can install a plugin, because Shrok's tools cannot write in the data folder. A plugin runs with Shrok's own rights, so install only code you trust. A plugin that fails to load is left out, and Shrok records why in its event log.
+
 ## Guides
 
 - [Setup](docs/setup.md)

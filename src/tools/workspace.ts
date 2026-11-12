@@ -18,7 +18,6 @@ import { Value } from "typebox/value";
 import type { Layout } from "../layout.ts";
 import { isInside, isSecret } from "../paths.ts";
 import type { ShrokTool } from "./policy.ts";
-import { BUNDLED_SKILLS } from "./skills.ts";
 
 const MAX_WORKSPACE_BYTES = 256 * 1024 * 1024;
 const MAX_WORKSPACE_ENTRIES = 4096;
@@ -144,7 +143,11 @@ export type WriteFile = (
  * read, write and edit, confined to the workspace. Writes are serialized, quota-checked, and replace rather than
  * mutate an inode; the managed folders change only through their own tools.
  */
-export const createWorkspaceFiles = (layout: Layout) => {
+export const createWorkspaceFiles = (
+  layout: Layout,
+  /** Skill folders outside the workspace, such as the bundled ones and plugins', which read may open. */
+  readableSkills: readonly string[]
+) => {
   const { workspace } = layout;
 
   // Folders with limits of their own, or bash's own scratch space, which write's budget leaves out.
@@ -273,16 +276,19 @@ export const createWorkspaceFiles = (layout: Layout) => {
       return "That folder holds the user's credentials. Shrok may not open it.";
     }
 
+    if (
+      tool === "read" &&
+      readableSkills.some((dir) => isInside(target, dir))
+    ) {
+      return undefined;
+    }
+
     if (isInside(target, layout.dataDir) && !isInside(target, workspace)) {
       return "That holds Shrok's own records and keys. Tools may open only the workspace.";
     }
 
-    if (tool === "read" && isInside(target, BUNDLED_SKILLS)) {
-      return undefined;
-    }
-
     if (!isInside(target, workspace)) {
-      return `Tools open files only inside the workspace, ${workspace}, or read bundled skills.`;
+      return `Tools open files only inside the workspace, ${workspace}, or read the bundled and plugin skills.`;
     }
 
     if (!WRITING_TOOLS.has(tool)) {

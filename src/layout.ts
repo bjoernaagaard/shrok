@@ -13,6 +13,8 @@ export interface Layout {
   /** Where gws downloads before a file moves into the workspace, outside every tool's reach. */
   readonly downloads: string;
   readonly workspace: string;
+  /** Plugins the owner installed: one folder each, with a plugin.ts and optional skills. */
+  readonly plugins: string;
   /** Files read from the owner's Drive. */
   readonly drive: string;
   /** bash's home and temp folders: its programs' caches and scratch files, outside the write tool's budget. */
@@ -72,6 +74,7 @@ export const layoutOf = (dataDir: string): Layout => {
         name: "skills",
       },
     ],
+    plugins: path.join(dataDir, "plugins"),
     skills,
     workspace,
   };

@@ -22,7 +22,7 @@ import { createSandboxedBash } from "./sandbox.ts";
 import type { SeenUrls } from "./seen-urls.ts";
 import { createSendFileTool } from "./send.ts";
 import type { SendFile } from "./send.ts";
-import { BUNDLED_SKILLS, formatSkillsForPrompt, loadSkills } from "./skills.ts";
+import { formatSkillsForPrompt, loadSkills } from "./skills.ts";
 import { createTransformTool } from "./transform.ts";
 import { createWebTools } from "./web.ts";
 import { createWorkspaceFiles } from "./workspace.ts";
@@ -47,8 +47,10 @@ export interface ToolsOptions {
   /** Searches the web, and writes for flows. */
   readonly smallModel: Model<Api>;
   readonly mcpTools: readonly ToolRegistration[];
-  /** The browser's tools and the local module's. */
+  /** The browser's tools and the plugins'. */
   readonly moreTools: readonly ShrokTool[];
+  /** Where skills come from, in the order a name collision is decided. */
+  readonly skillDirs: readonly string[];
   readonly fileSender: Promise<SendFile>;
   readonly publicWeb: PublicWeb;
   readonly seenUrls: SeenUrls;
@@ -57,7 +59,12 @@ export interface ToolsOptions {
 /** Shrok's own tools, the browser's and the local module's, with the prompt that explains them. */
 export const createTools = (options: ToolsOptions) => {
   const { approvals, layout } = options;
-  const files = createWorkspaceFiles(layout);
+
+  // The workspace's own skills folder is in it already; the others may be read but not changed.
+  const files = createWorkspaceFiles(
+    layout,
+    options.skillDirs.filter((dir) => dir !== layout.skills)
+  );
 
   const tools: ShrokTool[] = [
     ...files.tools,
@@ -83,7 +90,7 @@ export const createTools = (options: ToolsOptions) => {
       SHARES_PROMPT,
       BROWSER_PROMPT,
       ...(integrations.has("google") ? [GOOGLE_PROMPT] : []),
-      `Workspace: ${layout.workspace}${formatSkillsForPrompt(loadSkills([layout.skills, BUNDLED_SKILLS]).skills)}`,
+      `Workspace: ${layout.workspace}${formatSkillsForPrompt(loadSkills(options.skillDirs).skills)}`,
     ].join("\n\n");
 
   const extension = defineExtension({
