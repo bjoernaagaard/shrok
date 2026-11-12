@@ -14,13 +14,11 @@ import { Value } from "typebox/value";
 import { Document, parseDocument } from "yaml";
 
 import { report } from "./events.ts";
+import type { Layout } from "./layout.ts";
 
-export const ITEMS_FOLDER = "items";
 export const SEARCH_QUERY_MAX_CHARS = 1024;
 const SEARCH_QUERY_MAX_TERMS = 32;
 const MAX_ITEMS = 4096;
-
-export const FILES_FOLDER = path.join(ITEMS_FOLDER, "files");
 
 export const ITEM_KINDS = [
   "post",
@@ -147,10 +145,10 @@ export class Items {
   readonly #filenames = new Map<string, string>();
   readonly #db = new DatabaseSync(":memory:");
 
-  constructor(workspace: string) {
-    this.#workspace = workspace;
-    this.#dir = path.join(workspace, ITEMS_FOLDER);
-    mkdirSync(path.join(workspace, FILES_FOLDER), { recursive: true });
+  constructor(layout: Layout) {
+    this.#workspace = layout.workspace;
+    this.#dir = layout.items;
+    mkdirSync(layout.files, { recursive: true });
     this.#db.exec(
       "CREATE VIRTUAL TABLE items USING fts5(id UNINDEXED, kind UNINDEXED, created UNINDEXED, updated UNINDEXED, source, title, tags, body, tokenize = 'unicode61 remove_diacritics 2')"
     );

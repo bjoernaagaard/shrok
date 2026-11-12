@@ -1,5 +1,4 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   AssistantEntry,
   defineDoc,
@@ -8,20 +7,24 @@ import {
   defineTool,
   section,
 } from "@earendil-works/pi-durable";
-import type { EntryId } from "@earendil-works/pi-durable";
 import type { Static } from "typebox";
 import { Value } from "typebox/value";
 
+import { ask } from "./conversation.ts";
 import { locale, timeZone } from "./settings.ts";
 import { localTime } from "./time.ts";
-import type { Approvals } from "./tools/approvals.ts";
+import { text } from "./tools/output.ts";
+import type { ShrokTool } from "./tools/policy.ts";
+import { registrations } from "./tools/policy.ts";
 
+/** Sends text to the owner, unless the same text was already sent at or after `unlessSentSince`. */
 export type Notify = (text: string, unlessSentSince: Date) => Promise<void>;
 
 const CLOCK = /^(?<hour>[01]\d|2[0-3]):(?<minute>[0-5]\d)$/u;
 const DAYS_IN_WEEK = 7;
 const MAX_SCHEDULES = 64;
 const MAX_WHAT_CHARS = 2000;
+const MAX_MONTHS_AHEAD = 13;
 
 const WhenSchema = Type.Object({
   at: Type.String({ description: `Clock time, HH:MM, ${timeZone} time` }),
@@ -31,7 +34,23 @@ const WhenSchema = Type.Object({
   days: Type.Optional(
     Type.Array(Type.Integer({ maximum: 7, minimum: 1 }), {
       description:
-        "Repeat on these weekdays, 1 Monday to 7 Sunday. Leave out both date and days to repeat daily.",
+        "Repeat on these weekdays, 1 Monday to 7 Sunday. Leave out date, days and month_days to repeat daily.",
+    })
+  ),
+  every_weeks: Type.Optional(
+    Type.Integer({
+      description:
+        "With days: repeat only every this many weeks, counting from this week. 2 means every other week.",
+      maximum: 52,
+      minimum: 2,
+    })
+  ),
+  /** The week every_weeks counts from: set when the schedule is made. */
+  from: Type.Optional(Type.String()),
+  month_days: Type.Optional(
+    Type.Array(Type.Integer({ maximum: 31, minimum: 1 }), {
+      description:
+        "Repeat monthly on these days of the month. A month without the day skips it.",
     })
   ),
 });
@@ -65,8 +84,16 @@ const problemWith = (when: When): string | undefined => {
     return `"${when.at}" is not a clock time like 08:00.`;
   }
 
-  if (when.date !== undefined && when.days !== undefined) {
-    return "Give either a date (once) or days (weekly), not both.";
+  const kinds = [when.date, when.days, when.month_days].filter(
+    (kind) => kind !== undefined
+  );
+
+  if (kinds.length > 1) {
+    return "Give one of date (once), days (weekly) or month_days (monthly).";
+  }
+
+  if (when.every_weeks !== undefined && when.days === undefined) {
+    return "every_weeks needs days.";
   }
 
   if (when.date !== undefined) {
@@ -77,7 +104,46 @@ const problemWith = (when: When): string | undefined => {
     }
   }
 
-  return when.days?.length === 0 ? "days is empty." : undefined;
+  return when.days?.length === 0 || when.month_days?.length === 0
+    ? "days and month_days may not be empty."
+    : undefined;
+};
+
+const monday = (date: Temporal.PlainDate): Temporal.PlainDate =>
+  date.subtract({ days: date.dayOfWeek - 1 });
+
+/** "every", "every other" or "every 3 weeks on", for a weekly schedule. */
+const everyWeeks = (weeks: number | undefined): string => {
+  if (weeks === undefined) {
+    return "every";
+  }
+
+  return weeks === 2 ? "every other" : `every ${weeks} weeks on`;
+};
+
+/** Whether a day matches the schedule's repeat pattern. */
+const repeatsOn = (when: When, day: Temporal.ZonedDateTime): boolean => {
+  if (when.month_days !== undefined) {
+    return when.month_days.includes(day.day);
+  }
+
+  if (when.days === undefined) {
+    return true;
+  }
+
+  if (!when.days.includes(day.dayOfWeek)) {
+    return false;
+  }
+
+  if (when.every_weeks === undefined || when.from === undefined) {
+    return true;
+  }
+
+  const weeks =
+    monday(Temporal.PlainDate.from(when.from)).until(monday(day.toPlainDate()))
+      .days / DAYS_IN_WEEK;
+
+  return weeks % when.every_weeks === 0;
 };
 
 const nextRun = (when: When, after: number): number | undefined => {
@@ -103,28 +169,19 @@ const nextRun = (when: When, after: number): number | undefined => {
       second: 0,
     });
 
-  for (let offset = 0; offset <= DAYS_IN_WEEK; offset += 1) {
-    const candidate = start.add({ days: offset });
+  const end = start.add({ months: MAX_MONTHS_AHEAD });
 
-    if (
-      candidate.epochMilliseconds > after &&
-      (when.days?.includes(candidate.dayOfWeek) ?? true)
-    ) {
+  for (
+    let candidate = start;
+    Temporal.ZonedDateTime.compare(candidate, end) < 0;
+    candidate = candidate.add({ days: 1 })
+  ) {
+    if (candidate.epochMilliseconds > after && repeatsOn(when, candidate)) {
       return candidate.epochMilliseconds;
     }
   }
 
   return undefined;
-};
-
-const describeWhen = (when: When): string => {
-  if (when.date !== undefined) {
-    return `once on ${when.date} at ${when.at}`;
-  }
-
-  return when.days === undefined
-    ? `every day at ${when.at}`
-    : `on weekdays ${when.days.join(", ")} (1 is Monday) at ${when.at}`;
 };
 
 const WEEKDAYS = [
@@ -137,7 +194,7 @@ const WEEKDAYS = [
   "Sunday",
 ] as const;
 
-const dayList = new Intl.ListFormat(locale, { type: "conjunction" });
+const list = new Intl.ListFormat(locale, { type: "conjunction" });
 
 const dayFormat = new Intl.DateTimeFormat(locale, {
   day: "numeric",
@@ -146,53 +203,46 @@ const dayFormat = new Intl.DateTimeFormat(locale, {
   weekday: "long",
 });
 
-const scheduleLabel = (when: When): string => {
+/** How the owner reads when a schedule fires, such as "every other Tuesday at 08:00". */
+const describeWhen = (when: When): string => {
   if (when.date !== undefined) {
     const day = dayFormat.format(
       new Date(`${Temporal.PlainDate.from(when.date).toString()}T12:00:00Z`)
     );
 
-    return `⏰ _Scheduled for ${day} at ${when.at}_`;
+    return `on ${day} at ${when.at}`;
+  }
+
+  if (when.month_days !== undefined) {
+    return `every month on day ${list.format([...new Set(when.month_days)].toSorted((a, b) => a - b).map(String))} at ${when.at}`;
   }
 
   if (when.days === undefined) {
-    return `⏰ _Every day at ${when.at}_`;
+    return `every day at ${when.at}`;
   }
 
   const names = [...new Set(when.days)]
     .toSorted((a, b) => a - b)
     .map((day) => WEEKDAYS[day - 1] ?? String(day));
 
-  return `⏰ _Every ${dayList.format(names)} at ${when.at}_`;
+  const every = everyWeeks(when.every_weeks);
+
+  return `${every} ${list.format(names)} at ${when.at}`;
 };
-
-export const answerText = (
-  model: readonly { role: string }[] | undefined
-): string =>
-  (model ?? [])
-    .filter(
-      (message): message is AssistantMessage => message.role === "assistant"
-    )
-    .flatMap((message) => message.content)
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("\n\n")
-    .trim();
-
-const reply = (value: string) => ({
-  output: [{ text: value, type: "text" as const }],
-});
 
 const PROMPT = `# Schedules
 
-schedule makes Shrok act at a time the user asks for: a reminder, or a task to do then. It fires on
-${timeZone} time, once on a date, weekly on some days, or daily, and survives restarts. When it fires you
-get a message that starts with [Scheduled], followed by what you wrote: do it, and write what the user
-should read, since your answer is sent to his phone. A line saying when the schedule fired, starting with
-⏰, is put above your answer, so don't repeat the time or add an alarm emoji. Set only schedules the user
-asks for: each waits for his /yes to its exact text and time. Use schedules to list them and cancel_schedule
-to stop one.`;
+schedule makes Shrok act at a time: a reminder, or a task to do then. It fires on ${timeZone} time, once on a
+date, weekly on some days (optionally every few weeks), monthly on days of the month, or daily, and survives
+restarts. When it fires you get a message that starts with [Scheduled], followed by what you wrote: do it, and write
+what the user should read, since your answer is sent to his phone. A line saying when the schedule fired, starting
+with ⏰, is put above your answer, so don't repeat the time or add an alarm emoji.
 
-export const createSchedulesExtension = (approvals: Approvals) => {
+Set schedules when he asks, and also on your own when it clearly helps him, such as a follow-up you promised or a
+reminder before something he mentioned. Tell him each time you set one. Use schedules to list them and
+cancel_schedule to stop one.`;
+
+export const createSchedules = () => {
   const sender = Promise.withResolvers<Notify>();
 
   const Schedule = defineTask<ScheduleInput, ScheduleState, null>({
@@ -206,10 +256,10 @@ export const createSchedulesExtension = (approvals: Approvals) => {
     name: "shrok.schedule",
     phases: {
       deliver: async (task, runtime, context) => {
-        const { due, text } = task.state.checkpoint;
+        const { due, text: message } = task.state.checkpoint;
         const notify = await sender.promise;
 
-        await notify(text, new Date(due));
+        await notify(message, new Date(due));
         const next = nextRun(task.input.when, due);
 
         await runtime.commit(async (tx) => {
@@ -240,11 +290,7 @@ export const createSchedulesExtension = (approvals: Approvals) => {
           context
         );
 
-        const cancelled = !(listed?.items ?? []).some(
-          (item) => item.id === task.id
-        );
-
-        if (cancelled) {
+        if (!(listed?.items ?? []).some((item) => item.id === task.id)) {
           await runtime.commit(
             () => ({
               outcome: { result: null, status: "completed" },
@@ -265,38 +311,36 @@ export const createSchedulesExtension = (approvals: Approvals) => {
           throw new Error("The schedule's conversation is gone.");
         }
 
-        const submission = await conversation.submit(
+        const answer = await ask(
           {
-            content: `<sent>${localTime.format(due)}</sent>\n\n[Scheduled] ${task.input.what}`,
+            answerOf: async (id) => {
+              const entry = await runtime.entry(AssistantEntry, id, context);
+
+              return entry?.model;
+            },
+            submit: async (draft, submitContext) =>
+              await conversation.submit(draft, submitContext),
+          },
+          {
             requestId: `schedule:${task.id}:${due}`,
-            type: "input",
+            sentAt: due,
+            text: `[Scheduled] ${task.input.what}`,
           },
           context
         );
 
-        const settled = await submission.wait(context);
-
-        const answerOf = async (id: EntryId) => {
-          const entry = await runtime.entry(AssistantEntry, id, context);
-
-          return entry?.model;
-        };
-
-        const answered =
-          settled.status === "done" && settled.type === "input"
-            ? answerText(await answerOf(settled.answer))
-            : "";
-
         const done =
-          answered === ""
-            ? `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`
-            : answered;
-
-        const text = `${scheduleLabel(task.input.when)}\n\n${done}`;
+          answer.answered && answer.text !== ""
+            ? answer.text
+            : `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`;
 
         await runtime.commit(
           () => ({
-            checkpoint: { due, phase: "deliver", text },
+            checkpoint: {
+              due,
+              phase: "deliver",
+              text: `⏰ _${describeWhen(task.input.when).replace(/^./u, (first) => first.toUpperCase())}_\n\n${done}`,
+            },
             status: "running",
           }),
           context
@@ -323,73 +367,56 @@ export const createSchedulesExtension = (approvals: Approvals) => {
     version: 1,
   });
 
-  const extension = defineExtension({
-    name: "schedules",
-    sections: [section("schedules", () => PROMPT)],
-    tasks: [Schedule],
-    tools: [
-      defineTool({
-        description: `Make Shrok act at a time: a reminder, or something to do then. It fires on ${timeZone} time and survives restarts. Waits for his /yes.`,
+  const tools: ShrokTool[] = [
+    {
+      phrase: "setting a schedule",
+      tool: defineTool({
+        description: `Make Shrok act at a time: a reminder, or something to do then. It fires on ${timeZone} time and survives restarts.`,
         execute: async (args, api, context) => {
-          const when: When = Value.Parse(WhenSchema, args.when);
+          const today = Temporal.Instant.fromEpochMilliseconds(api.now())
+            .toZonedDateTimeISO(timeZone)
+            .toPlainDate()
+            .toString();
+
+          const when: When = {
+            ...Value.Parse(WhenSchema, args.when),
+            from: today,
+          };
+
           const problem = problemWith(when);
 
           if (problem !== undefined) {
-            return reply(problem);
+            return text(problem);
           }
 
           const due = nextRun(when, api.now());
 
           if (due === undefined) {
-            return reply("That time has already passed.");
+            return text("That time has already passed, or never comes.");
           }
 
-          const set = await api.snapshot(
-            Schedules,
-            api.conversationId,
-            context
-          );
+          const id = await api.commit(async (tx) => {
+            const listed = await tx.doc(Schedules, api.conversationId);
 
-          if ((set?.items.length ?? 0) >= MAX_SCHEDULES) {
-            return reply(
-              `${MAX_SCHEDULES} schedules are set already. Cancel one before setting another.`
+            if (listed.items.length >= MAX_SCHEDULES) {
+              return null;
+            }
+
+            const created = await tx.createTask(
+              Schedule,
+              { what: args.what, when },
+              { background: true, ownership: { kind: "conversation" } }
             );
-          }
 
-          let id = 0;
+            listed.items.push({ id: created, what: args.what, when });
 
-          // A fired schedule runs as the owner's message, so only the owner may set its text and time.
-          await approvals.execute(
-            api,
-            () => ({
-              adapter: "schedule-create-v1" as const,
-              arguments: args,
-              expectedState: {},
-              identity: {},
-              payload: { what: args.what, when },
-              resource: {},
-              summary: `schedule ${describeWhen(when)}, first ${localTime.format(due)}: ${args.what}`,
-              tool: "schedule" as const,
-            }),
-            async (action) => {
-              id = await api.commit(async (tx) => {
-                const created = await tx.createTask(Schedule, action.payload, {
-                  background: true,
-                  ownership: { kind: "conversation" },
-                });
+            return created;
+          }, context);
 
-                const listed = await tx.doc(Schedules, api.conversationId);
-
-                listed.items.push({ id: created, ...action.payload });
-
-                return created;
-              }, context);
-            },
-            context.abortSignal
-          );
-
-          return reply(
-            `Scheduled ${id}, ${describeWhen(when)}. First time: ${localTime.format(due)}.`
+          return text(
+            id === null
+              ? `${MAX_SCHEDULES} schedules are set already. Cancel one before setting another.`
+              : `Scheduled ${id}, ${describeWhen(when)}. First time: ${localTime.format(due)}.`
           );
         },
         name: "schedule",
@@ -402,7 +429,10 @@ export const createSchedulesExtension = (approvals: Approvals) => {
           when: WhenSchema,
         }),
       }),
-      defineTool({
+    },
+    {
+      phrase: "checking your schedules",
+      tool: defineTool({
         description: "List the schedules that are set, with their next time.",
         execute: async (_args, api, context) => {
           const listed = await api.snapshot(
@@ -417,13 +447,16 @@ export const createSchedulesExtension = (approvals: Approvals) => {
             return `- ${item.id}: ${item.what} (${describeWhen(item.when)}; next ${next === undefined ? "never" : localTime.format(next)})`;
           });
 
-          return reply(lines.length === 0 ? "No schedules." : lines.join("\n"));
+          return text(lines.length === 0 ? "No schedules." : lines.join("\n"));
         },
         name: "schedules",
         parameters: Type.Object({}),
         replay: "safe",
       }),
-      defineTool({
+    },
+    {
+      phrase: "cancelling a schedule",
+      tool: defineTool({
         description: "Stop a schedule, by the id schedules lists.",
         execute: async (args, api, context) => {
           const removed = await api.commit(async (tx) => {
@@ -435,7 +468,7 @@ export const createSchedulesExtension = (approvals: Approvals) => {
             return listed.items.length < before;
           }, context);
 
-          return reply(
+          return text(
             removed ? `Cancelled ${args.id}.` : `No schedule ${args.id}.`
           );
         },
@@ -443,13 +476,19 @@ export const createSchedulesExtension = (approvals: Approvals) => {
         parameters: Type.Object({ id: Type.Integer() }),
         replay: "safe",
       }),
-    ],
-  });
+    },
+  ];
 
   return {
     attach: (notify: Notify): void => {
       sender.resolve(notify);
     },
-    extension,
+    extension: defineExtension({
+      name: "schedules",
+      sections: [section("schedules", () => PROMPT)],
+      tasks: [Schedule],
+      tools: registrations(tools),
+    }),
+    tools,
   };
 };

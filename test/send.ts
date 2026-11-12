@@ -7,7 +7,6 @@ import { Value } from "typebox/value";
 
 import {
   approvalId,
-  isReply,
   REPLY_BUDGET_MS,
   Session,
   StageFailedError,
@@ -20,6 +19,9 @@ import {
  */
 
 const ASK_BUDGET_MS = 300_000;
+
+/** What an approval tool returns while the owner has not answered: nothing has happened yet. */
+const ASKED = /^Asked the owner to approve request \d+\./u;
 
 const session = await Session.open("send");
 const code = `SEND-${randomInt(1000, 9999)}`;
@@ -64,11 +66,12 @@ const askAndDecline = async (
 ): Promise<string> => {
   const since = await session.send(ask);
 
+  // The request and Shrok's reply that it asked can arrive in either order, so wait for the request itself.
   const request = await session.waitFor(
     stage,
     since,
     ASK_BUDGET_MS,
-    (text) => approvalId(text) !== undefined || isReply(text)
+    (text) => approvalId(text) !== undefined
   );
 
   const id = approvalId(request.text);
@@ -102,7 +105,7 @@ const neverRan = (stage: string, tool: string): void => {
     throw new StageFailedError(stage, `Shrok never called ${tool}`);
   }
 
-  const succeeded = runs.find((run) => !run.isError);
+  const succeeded = runs.find((run) => !run.isError && !ASKED.test(run.text));
 
   if (succeeded !== undefined) {
     throw new StageFailedError(
@@ -126,7 +129,7 @@ await session.finish("send", async () => {
   const command = await askAndDecline(
     "command",
     `Use run_program to run gws with exactly these arguments: gmail users getProfile --params {"userId":"me"}`,
-    ['"gws","gmail","users","getProfile"']
+    ["gws gmail users getProfile"]
   );
 
   neverRan("command", "run_program");

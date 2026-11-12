@@ -8,11 +8,16 @@ import { api, bot, util } from "simplex-chat";
 
 import { deliverApproval } from "./approval-delivery.ts";
 import { report } from "./events.ts";
-import { FILES_FOLDER } from "./items.ts";
+import type { Layout } from "./layout.ts";
 import type { Progress } from "./partials.ts";
 import { shareMessage } from "./shares.ts";
 import { isApprovalRequestText } from "./tools/approvals.ts";
-import type { ApprovalPhone, Approvals, Decision } from "./tools/approvals.ts";
+import type {
+  ApprovalPhone,
+  Approvals,
+  Decision,
+  Verdict,
+} from "./tools/approvals.ts";
 
 type ChatApi = api.ChatApi;
 
@@ -84,6 +89,11 @@ const COMMANDS: T.ChatBotCommand[] = [
   { keyword: "stop", label: "Stop what Shrok is doing", type: "command" },
   { keyword: "schedules", label: "Show schedules", type: "command" },
   { keyword: "skills", label: "Show skills", type: "command" },
+  {
+    keyword: "grants",
+    label: "Show what you allowed for good",
+    type: "command",
+  },
 ];
 
 const QUESTIONS = new Map([
@@ -102,8 +112,9 @@ const HELP = `*Shrok* works for you from this chat. Ask in plain words, or share
 /stop stops what I'm doing
 /schedules shows your reminders and timed tasks
 /skills shows what I know how to do
+/grants shows what you allowed for good, and /revoke removes one
 
-An approval must identify its request: use its numbered command, quote the request in a reply, or react ${APPROVE} or ${DECLINE} on that request. Bare approval commands are not accepted.`;
+Some actions wait for your approval. A request stays open until you answer it: tap its /yes or /no, quote it in a reply, or react ${APPROVE} or ${DECLINE} on it. /always approves it and allows that kind of action from then on. Bare approval commands are not accepted.`;
 
 const ANSWERED = new Set<T.MsgContent["type"]>([
   "text",
@@ -355,15 +366,15 @@ const plainVerdict = (text: string): boolean | undefined => {
  * restart Shrok finds the messages it never answered.
  */
 export const openPhone = async (
-  dataDir: string,
+  layout: Layout,
   handlers: PhoneHandlers
 ): Promise<Phone> => {
   const { answer, approvals, stop } = handlers;
   const ready = Promise.withResolvers<ChatApi>();
   const activeUser = Promise.withResolvers<number>();
   const inFlight = new Set<number>();
-  const workspace = path.join(dataDir, "workspace");
-  const filesDir = path.join(workspace, FILES_FOLDER);
+  const { workspace } = layout;
+  const filesDir = layout.files;
   const transfers = new Map<number, PromiseWithResolvers<T.CIFile>>();
   const liveReplies = new Set<() => void>();
   let closing = false;
@@ -642,22 +653,21 @@ export const openPhone = async (
   const approve = async (
     contactId: number,
     itemId: number,
-    approved: boolean,
+    verb: Verdict,
     params: string,
     receivedAt: number
   ): Promise<void> => {
-    const verb = approved ? "yes" : "no";
     const approvalOwner = { contactId, userId: await activeUser.promise };
     const waiting = approvals.asked(approvalOwner);
     const named = /^\d+$/u.test(params) ? Number(params) : undefined;
 
     const decision =
       named !== undefined && Number.isSafeInteger(named) && named > 0
-        ? approvals.decide(named, approved, approvalOwner, receivedAt)
+        ? approvals.decide(named, verb, approvalOwner, receivedAt)
         : "unavailable";
 
     if (decision === "decided") {
-      await react(contactId, itemId, approved ? APPROVE : DECLINE);
+      await react(contactId, itemId, verb === "no" ? DECLINE : APPROVE);
 
       return;
     }
@@ -687,6 +697,67 @@ export const openPhone = async (
     );
   };
 
+  /** A slash command: answered here, or turned into a question for the brain. */
+  const runCommand = async (
+    contactId: number,
+    itemId: number,
+    keyword: string,
+    params: string,
+    receivedAt: number
+  ): Promise<Route> => {
+    if (keyword === "yes" || keyword === "no" || keyword === "always") {
+      await approve(contactId, itemId, keyword, params, receivedAt);
+
+      return HANDLED;
+    }
+
+    if (keyword === "grants") {
+      const grants = approvals.grants();
+
+      await say(
+        contactId,
+        itemId,
+        grants.length === 0
+          ? "You haven't allowed anything for good. Answer a request with /always to do that."
+          : `You allowed these for good:\n\n${grants.map(({ id, key }) => `${id}. ${key}   /'revoke ${id}'`).join("\n")}`
+      );
+
+      return HANDLED;
+    }
+
+    if (keyword === "revoke") {
+      const id = /^\d+$/u.test(params) ? Number(params) : undefined;
+
+      await (id !== undefined && approvals.revoke(id)
+        ? react(contactId, itemId, APPROVE)
+        : say(
+            contactId,
+            itemId,
+            "That isn't one of your standing permissions. Send /grants to see them."
+          ));
+
+      return HANDLED;
+    }
+
+    if (keyword === "help") {
+      await say(contactId, itemId, HELP);
+
+      return HANDLED;
+    }
+
+    if (keyword === "stop") {
+      await ((await stop())
+        ? react(contactId, itemId, APPROVE)
+        : say(contactId, itemId, "Nothing is running right now."));
+
+      return HANDLED;
+    }
+
+    const question = QUESTIONS.get(keyword);
+
+    return question === undefined ? BRAIN : { kind: "brain", question };
+  };
+
   const route = async (
     contactId: number,
     item: T.ChatItem,
@@ -709,7 +780,7 @@ export const openPhone = async (
       await approve(
         contactId,
         itemId,
-        verdict,
+        verdict ? "yes" : "no",
         String(quotedRequest),
         receivedAt
       );
@@ -733,35 +804,13 @@ export const openPhone = async (
       return BRAIN;
     }
 
-    if (keyword === "yes" || keyword === "no") {
-      await approve(
-        contactId,
-        itemId,
-        keyword === "yes",
-        command.params,
-        receivedAt
-      );
-
-      return HANDLED;
-    }
-
-    if (keyword === "help") {
-      await say(contactId, itemId, HELP);
-
-      return HANDLED;
-    }
-
-    if (keyword === "stop") {
-      await ((await stop())
-        ? react(contactId, itemId, APPROVE)
-        : say(contactId, itemId, "Nothing is running right now."));
-
-      return HANDLED;
-    }
-
-    const question = QUESTIONS.get(keyword);
-
-    return question === undefined ? BRAIN : { kind: "brain", question };
+    return await runCommand(
+      contactId,
+      itemId,
+      keyword,
+      command.params,
+      receivedAt
+    );
   };
 
   const think = async (
@@ -812,7 +861,6 @@ export const openPhone = async (
 
     liveReplies.add(cancel);
 
-    const receivedAt = new Date(item.meta.createdAt);
     const sentAt = new Date(item.meta.itemTs);
 
     try {
@@ -826,16 +874,12 @@ export const openPhone = async (
         (content === undefined ? "" : await messageText(item, content));
 
       // Start under the owner lock, but never hold pairing up for the model's answer.
-      const answering = await withOwner(contactId, generation, async () => {
-        approvals.skipBefore(receivedAt);
-
-        return {
-          result: answer(text, `simplex:${itemId}`, sentAt, (next) => {
-            progress = next;
-            show();
-          }),
-        };
-      });
+      const answering = await withOwner(contactId, generation, async () => ({
+        result: answer(text, `simplex:${itemId}`, sentAt, (next) => {
+          progress = next;
+          show();
+        }),
+      }));
 
       const answered = await answering.result;
 
@@ -951,7 +995,7 @@ export const openPhone = async (
 
     const decision = approvals.decide(
       id,
-      emoji === APPROVE,
+      emoji === APPROVE ? "yes" : "no",
       approvalOwner,
       receivedAt
     );
@@ -967,7 +1011,7 @@ export const openPhone = async (
 
   const [chat, user] = await bot.run({
     dbOpts: {
-      filePrefix: path.join(dataDir, "simplex", "shrok"),
+      filePrefix: path.join(layout.dataDir, "simplex", "shrok"),
       type: "sqlite",
     },
     events: {

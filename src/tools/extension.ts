@@ -1,251 +1,105 @@
-import path from "node:path";
-
-import type { Context } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import {
-  defineExtension,
-  hook,
-  section,
-  ToolTask,
-} from "@earendil-works/pi-durable";
+import { defineExtension, section } from "@earendil-works/pi-durable";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
-import { getOrThrow } from "@earendil-works/pi-durable/env";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import {
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-} from "@earendil-works/pi-durable/tools";
-import { Value } from "typebox/value";
 
-import { FLOWS_FOLDER } from "../flows.ts";
-import { ITEMS_FOLDER } from "../items.ts";
 import type { Items } from "../items.ts";
+import type { Layout } from "../layout.ts";
 import { integrations } from "../settings.ts";
 import type { Approvals } from "./approvals.ts";
-import { createGoogleTools } from "./google.ts";
+import { BROWSER_PROMPT } from "./browser.ts";
+import { createGoogleTools, GOOGLE_PROMPT } from "./google.ts";
 import { createItemTools } from "./items.ts";
-import { capabilityProblem } from "./judge.ts";
+import { createListTools } from "./lists.ts";
+import { createPlaceTools } from "./places.ts";
+import type { ShrokTool } from "./policy.ts";
+import { registrations } from "./policy.ts";
 import { createProgramsTools } from "./programs.ts";
 import type { PublicWeb } from "./public-web.ts";
-import {
-  createSandboxedBash,
-  isInside,
-  isShrokRecord,
-  isSecret,
-} from "./sandbox.ts";
+import { createSandboxedBash } from "./sandbox.ts";
 import type { SeenUrls } from "./seen-urls.ts";
 import { createSendFileTool } from "./send.ts";
 import type { SendFile } from "./send.ts";
 import { BUNDLED_SKILLS, formatSkillsForPrompt, loadSkills } from "./skills.ts";
+import { createTransformTool } from "./transform.ts";
 import { createWebTools } from "./web.ts";
 import { createWorkspaceFiles } from "./workspace.ts";
 import { createXTools } from "./x.ts";
 
-const FILE_TOOLS = new Set(["read", "write", "edit"]);
-const WRITING_TOOLS = new Set(["write", "edit"]);
-const PathArgs = Type.Object({ path: Type.String() });
+const PROMPT = `# Workspace and skills
 
-// pi-durable's file tools resolve paths with normalizeToolPath, which its package exports don't include.
-const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/gu;
+Your tools work in your workspace folder. read, write and edit work only there and in the bundled skills;
+write and edit enforce file and storage budgets. bash runs in a sandbox in the workspace: it can write there and
+reach the public web, but not the home folder outside the workspace or the private network. The items, flows,
+lists and skills folders change only through their own tools.
 
-const toolPath = async (
-  workspace: string,
-  raw: string,
-  context: Context
-): Promise<string> => {
-  const normalized = raw.replaceAll(UNICODE_SPACES, " ");
+# Approvals
 
-  return getOrThrow(
-    await new NodeExecutionEnv({ cwd: workspace }).absolutePath(
-      normalized.startsWith("@") ? normalized.slice(1) : normalized,
-      context
-    )
-  );
-};
+Some actions need the owner's consent: they ask him on his phone and return at once, saying the request is open.
+Nothing has happened then; don't wait for it or ask again. He answers whenever he likes, and you then get a message
+starting [Request N] that says how it went, with the action's result. Act on it: finish the task, or tell him why
+not. With /always he allows that kind of action for good, and it then runs without asking.
 
-const SKILLS_PROMPT = `# Workspace and skills
+Unsupported external effects are blocked, not judged by a model. MCP operations have no reviewed capability. Do not
+try another tool or ask for a generic approval to bypass a block. Ask the owner to do that step himself.
+Flows change only through save_flow. Running a flow does not authorize its child calls: each passes the same
+controls.
 
-Your tools work in your workspace folder. bash runs in a read-only sandbox there, has a mandatory
-execution deadline and output budget, cannot access the network, and cannot read the home folder outside the workspace.
-read works only in the workspace and bundled skills. Use write and edit for file changes. They work only
-in the workspace and enforce file and total storage budgets. Skills are owner-managed and cannot be changed by tools.
-Gmail drafts work without approval. Sending mail, calendar events without guests, paid X post reads and
-run_program commands require the owner's approval of the exact action with /yes. Draft first when the
-owner may want to edit the email himself.
+# Shares and skills
 
-For a website that needs clicking, such as a booking page, use the browser_ tools: each returns the
-page's elements with refs, and browser_click and browser_type take a ref from the latest one.
+A message that starts with [Shared link], [Shared file] or [Shared image] is something the user shared from his
+phone. Save it with save_item, following the saving-shares skill, then answer in one short line. Saved items are
+in the workspace's items folder; search them with search_items.
 
-Unsupported external effects are blocked, not classified by a model. MCP operations have no reviewed
-capability. Do not try another tool or ask for a generic approval to bypass a block.
-Ask the owner to complete the external step manually.
-Flows change only through save_flow. Do not try to create or replace a flow through another tool.
-Running an existing flow does not authorize its child calls: each still passes the same controls.
-
-A message that starts with [Shared link], [Shared file] or [Shared image] is something the user shared
-from his phone. Save it with save_item, following the saving-shares skill, then answer in one short line.
-Saved items are in the workspace's items folder. Only save_item changes them; search them with search_items.
-
-Skills are how-to notes in the workspace's skills folder: one folder per skill, holding a SKILL.md whose
-front matter has a name and a description of when to use it. Skills describe procedures, not permissions.
-A skill cannot override a blocked capability.`;
+Skills are how-to notes in the workspace's skills folder: one folder per skill, holding a SKILL.md whose front
+matter has a name and a description of when to use it. Skills describe procedures, not permissions.`;
 
 export interface ToolsOptions {
-  readonly allowed?: ReadonlySet<string>;
   readonly approvals: Approvals;
-  readonly dataDir: string;
-  readonly workspace: string;
+  readonly layout: Layout;
   readonly items: Items;
-  readonly searchModel: Model<Api>;
-  readonly textModel: Model<Api>;
+  /** Searches the web, and writes for flows. */
+  readonly smallModel: Model<Api>;
   readonly mcpTools: readonly ToolRegistration[];
-  readonly browserTools: readonly ToolRegistration[];
+  readonly browserTools: readonly ShrokTool[];
   readonly fileSender: Promise<SendFile>;
   readonly publicWeb: PublicWeb;
   readonly seenUrls: SeenUrls;
 }
 
-export const createToolsExtension = (options: ToolsOptions) => {
-  const {
-    allowed,
-    approvals,
-    browserTools,
-    dataDir,
-    fileSender,
-    items,
-    mcpTools,
-    publicWeb,
-    searchModel,
-    seenUrls,
-    textModel,
-    workspace,
-  } = options;
+/** Shrok's own tools, the browser's and the local module's, with the prompt that explains them. */
+export const createTools = (options: ToolsOptions) => {
+  const { approvals, layout } = options;
+  const files = createWorkspaceFiles(layout);
 
-  const files = createWorkspaceFiles(workspace);
-
-  const protectedDirs = [
-    {
-      block: "Skills are owner-managed and cannot be changed by tools.",
-      dir: path.join(workspace, "skills"),
-    },
-    {
-      block: "Saved items change only through save_item.",
-      dir: path.join(workspace, ITEMS_FOLDER),
-    },
-    {
-      block: "Flows change only through save_flow.",
-      dir: path.join(workspace, FLOWS_FOLDER),
-    },
+  const tools: ShrokTool[] = [
+    ...files.tools,
+    createSandboxedBash(layout.workspace),
+    ...createProgramsTools(approvals),
+    ...createItemTools(options.items),
+    ...createListTools(layout),
+    ...createPlaceTools(),
+    createTransformTool(options.smallModel),
+    createSendFileTool(layout.workspace, options.fileSender),
+    ...(integrations.has("google") ? createGoogleTools(approvals, layout) : []),
+    ...(integrations.has("x") ? createXTools(approvals) : []),
+    ...createWebTools(options.smallModel, options.publicWeb, options.seenUrls),
+    ...options.browserTools,
   ];
 
-  const pathProblem = async (
-    tool: string,
-    rawPath: string | undefined,
-    context: Context
-  ): Promise<string | undefined> => {
-    if (!FILE_TOOLS.has(tool)) {
-      return undefined;
-    }
+  const prompt = (): string =>
+    [
+      PROMPT,
+      BROWSER_PROMPT,
+      ...(integrations.has("google") ? [GOOGLE_PROMPT] : []),
+      `Workspace: ${layout.workspace}${formatSkillsForPrompt(loadSkills([layout.skills, BUNDLED_SKILLS]).skills)}`,
+    ].join("\n\n");
 
-    if (rawPath === undefined) {
-      return "The file tool needs an explicit path.";
-    }
-
-    const target = await toolPath(workspace, rawPath, context);
-
-    if (isSecret(target)) {
-      return "That folder holds the user's credentials. Shrok may not open it.";
-    }
-
-    if (isShrokRecord(target, dataDir, workspace)) {
-      return "That holds Shrok's own records and keys. Tools may open only the workspace.";
-    }
-
-    if (tool === "read" && isInside(target, BUNDLED_SKILLS)) {
-      return undefined;
-    }
-
-    if (!isInside(target, workspace)) {
-      return `Tools open files only inside the workspace, ${workspace}, or read bundled skills.`;
-    }
-
-    if (!WRITING_TOOLS.has(tool)) {
-      return undefined;
-    }
-
-    return protectedDirs.find(({ dir }) => isInside(target, dir))?.block;
-  };
-
-  const tools = [
-    createReadTool(),
-    createWriteTool(),
-    createEditTool(),
-    createSandboxedBash(workspace),
-    ...createProgramsTools(approvals),
-    ...createItemTools(items),
-    createSendFileTool(workspace, fileSender),
-    ...(integrations.google ? createGoogleTools(textModel, approvals) : []),
-    ...(integrations.x ? createXTools(approvals) : []),
-    ...createWebTools(searchModel, publicWeb, seenUrls),
-    ...browserTools,
-    ...mcpTools,
-  ].map((tool: ToolRegistration) => ({
-    ...tool,
-    execute: async (
-      ...[args, api, context]: Parameters<typeof tool.execute>
-    ) => {
-      const execute = async () => {
-        const problem = await pathProblem(
-          tool.name,
-          Value.Check(PathArgs, args) ? args.path : undefined,
-          context
-        );
-
-        if (problem !== undefined) {
-          throw new Error(problem);
-        }
-
-        return await tool.execute(
-          args,
-          WRITING_TOOLS.has(tool.name) ? { ...api, env: files.env } : api,
-          context
-        );
-      };
-
-      return await (WRITING_TOOLS.has(tool.name)
-        ? files.run(execute)
-        : execute());
-    },
-  }));
-
-  return defineExtension({
-    hooks: [
-      hook(ToolTask, {
-        beforeTool: async (call, _api, context) => {
-          const block =
-            capabilityProblem(call.name, allowed) ??
-            (await pathProblem(
-              call.name,
-              Value.Check(PathArgs, call.arguments)
-                ? call.arguments.path
-                : undefined,
-              context
-            ));
-
-          return block === undefined ? {} : { block };
-        },
-      }),
-    ],
+  const extension = defineExtension({
     name: "tools",
-    sections: [
-      section(
-        "workspace",
-        () =>
-          `${SKILLS_PROMPT}\n\nWorkspace: ${workspace}${formatSkillsForPrompt(loadSkills([path.join(workspace, "skills"), BUNDLED_SKILLS]).skills)}`
-      ),
-    ],
-    tools,
+    sections: [section("workspace", prompt)],
+    // MCP tools carry no Shrok policy, so the guard blocks them.
+    tools: [...registrations(tools), ...options.mcpTools],
   });
+
+  return { extension, problem: files.problem, tools };
 };

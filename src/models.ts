@@ -14,8 +14,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { withAnthropicClassifier } from "./classifier.ts";
-import { setting } from "./data-dir.ts";
-import { markViewCache } from "./memory/cache.ts";
+import { setting } from "./settings.ts";
 
 interface Defaults {
   readonly provider: string;
@@ -69,13 +68,17 @@ const omitThinkingText: NonNullable<PayloadHook> = (payload) => {
   return payload;
 };
 
+/** Runs the caller's hook, then Shrok's own for Anthropic: its cache mark, and no thinking summary. */
 const prepare =
-  (onPayload: PayloadHook): NonNullable<PayloadHook> =>
+  (
+    onPayload: PayloadHook,
+    cacheMark: NonNullable<PayloadHook>
+  ): NonNullable<PayloadHook> =>
   async (payload, model) => {
     const own = (await onPayload?.(payload, model)) ?? payload;
 
     return model.api === "anthropic-messages"
-      ? await omitThinkingText(await markViewCache(own, model), model)
+      ? await omitThinkingText(await cacheMark(own, model), model)
       : own;
   };
 
@@ -107,14 +110,16 @@ const withBaseUrl = (provider: Provider): Provider => {
 };
 
 // Shrok and pi-durable only call streamSimple.
-const withPayloadHooks = (provider: Provider): Provider => ({
-  ...provider,
-  streamSimple: (model, transcript, options) =>
-    provider.streamSimple(model, transcript, {
-      ...options,
-      onPayload: prepare(options?.onPayload),
-    }),
-});
+const withPayloadHooks =
+  (cacheMark: NonNullable<PayloadHook>) =>
+  (provider: Provider): Provider => ({
+    ...provider,
+    streamSimple: (model, transcript, options) =>
+      provider.streamSimple(model, transcript, {
+        ...options,
+        onPayload: prepare(options?.onPayload, cacheMark),
+      }),
+  });
 
 const findDefaults = async (models: Models): Promise<Defaults | undefined> => {
   for (const defaults of PROVIDER_DEFAULTS) {
@@ -161,19 +166,25 @@ const configuredModel = async <T>(
 
   if ((await models.checkAuth(provider)) === undefined) {
     throw new Error(
-      `${key} names ${name}, but provider ${provider} has no credentials. Add its key to secretspec.toml.`
+      `${key} names ${name}, but provider ${provider} has no credentials. Set its API key in the environment or in secrets.env in the data folder.`
     );
   }
 
   return model;
 };
 
-export const createShrokModels = async (): Promise<ShrokModels> => {
+/** The models the settings name. `cacheMark` marks where Anthropic may cache a request's stable start. */
+export const createShrokModels = async (
+  cacheMark: NonNullable<PayloadHook>
+): Promise<ShrokModels> => {
   const models = createModels();
 
   for (const provider of builtinProviders()) {
     models.setProvider(
-      withAnthropicClassifier(withPayloadHooks(withBaseUrl(provider)), models)
+      withAnthropicClassifier(
+        withPayloadHooks(cacheMark)(withBaseUrl(provider)),
+        models
+      )
     );
   }
 

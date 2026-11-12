@@ -15,7 +15,7 @@ const ATTEMPTS = 5;
 const RULER = "-".repeat(LINE_BYTES);
 const LINE_HEAD = /^\d+\+\d+\|/u;
 
-const bytes = (text: string): number => Buffer.byteLength(text, "utf-8");
+export const bytes = (text: string): number => Buffer.byteLength(text, "utf-8");
 
 const FRAME_TAG = /<(?=\/?(?:chat|input|sent)\b)/giu;
 

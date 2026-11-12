@@ -11,9 +11,9 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createBashTool } from "@earendil-works/pi-durable/tools";
 
-import { FLOWS_FOLDER } from "../flows.ts";
-import { ITEMS_FOLDER } from "../items.ts";
+import type { Layout } from "../layout.ts";
 import { importedSecretPaths, isImportedSecret } from "../secrets.ts";
+import type { ShrokTool } from "./policy.ts";
 
 const PROJECT_MODULES = path.resolve(
   import.meta.dirname,
@@ -163,13 +163,16 @@ const sandboxPath = (): string =>
     .join(path.delimiter);
 
 /**
- * Starts the read-only sandbox every bash command runs in. File tools handle bounded workspace writes.
- * Commands may not read the home folder outside the workspace, credentials, the rest of `dataDir`, or the network.
+ * Starts the sandbox every bash command runs in. Commands may write in the workspace outside its managed folders,
+ * and reach the public web through Shrok's proxy, which refuses private addresses. They may not read the home folder
+ * outside the workspace, credentials, or the rest of the data folder.
  */
 export const startSandbox = async (
-  dataDir: string,
-  workspace: string
+  layout: Layout,
+  proxyPort: number
 ): Promise<void> => {
+  const { dataDir, workspace } = layout;
+
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(
       "The bash sandbox does not support this system, so Shrok will not start without it."
@@ -184,9 +187,7 @@ export const startSandbox = async (
     );
   }
 
-  const guarded = [ITEMS_FOLDER, FLOWS_FOLDER, "skills"].map((folder) => {
-    const dir = path.join(workspace, folder);
-
+  const guarded = layout.managed.map(({ dir }) => {
     mkdirSync(dir, { recursive: true });
 
     return realPathEvenIfMissing(dir);
@@ -214,14 +215,14 @@ export const startSandbox = async (
         NODE_PREFIX,
         ...sandboxPath().split(path.delimiter),
       ].map((folder) => realPathEvenIfMissing(folder)),
-      allowWrite: [],
+      allowWrite: [realPathEvenIfMissing(workspace)],
       denyRead: [
         ...SECRET_DIRS,
         realPathEvenIfMissing(homedir()),
         realPathEvenIfMissing(dataDir),
       ],
-      // The runtime adds implicit writable temp and home directories even with allowWrite: [].
-      // Keep device-backed stdio, but deny every implicit on-disk write root.
+      // The runtime adds implicit writable temp and home directories. Keep device-backed stdio, but deny every
+      // implicit on-disk write root, so the workspace is the only place a command writes.
       denyWrite: [
         ...guarded,
         ...getDefaultWritePaths().filter(
@@ -236,7 +237,9 @@ export const startSandbox = async (
       allowUnixSockets: [],
       allowedDomains: [],
       deniedDomains: [],
-      strictAllowlist: true,
+      // Shrok's own proxy decides: public addresses only. Both ports name it, so the runtime starts no proxy of its own.
+      httpProxyPort: proxyPort,
+      socksProxyPort: proxyPort,
     },
   };
 
@@ -319,17 +322,25 @@ export const createSandboxedBash = (workspace: string) => {
   });
 
   return {
-    ...tool,
-    description:
-      "Run a read-only, offline bash command that can read the workspace but not the rest of the home folder. Commands have a mandatory deadline and total output byte budget. Output is never spilled to disk. Use write or edit to change workspace files.",
-    execute: async (...[args, api, context]: Parameters<typeof tool.execute>) =>
-      await tool.execute(
-        {
-          ...args,
-          timeout: Math.min(args.timeout ?? MAX_BASH_SECONDS, MAX_BASH_SECONDS),
-        },
-        { ...api, env },
-        context
-      ),
-  };
+    phrase: "running a command",
+    tool: {
+      ...tool,
+      description:
+        "Run a bash command in the workspace. It can write there, except in the items, flows, lists and skills folders, and reach public web addresses, but not the rest of the home folder or the private network. Commands have a mandatory deadline and total output byte budget. Output is never spilled to disk.",
+      execute: async (
+        ...[args, api, context]: Parameters<typeof tool.execute>
+      ) =>
+        await tool.execute(
+          {
+            ...args,
+            timeout: Math.min(
+              args.timeout ?? MAX_BASH_SECONDS,
+              MAX_BASH_SECONDS
+            ),
+          },
+          { ...api, env },
+          context
+        ),
+    },
+  } satisfies ShrokTool;
 };

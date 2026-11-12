@@ -28,24 +28,20 @@ await session.finish("schedule", async () => {
     `On ${due.toPlainDate().toString()} at ${clock}, remind me to drink water. Put the code ${code} in the reminder.`
   );
 
-  // A schedule waits for the owner's /yes to its exact text and time.
-  const request = await session.waitFor(
-    "ask",
+  // Shrok sets a schedule without asking, and says when it fires.
+  const confirmed = await session.waitFor(
+    "set",
     asked,
     REPLY_BUDGET_MS,
     (text) => approvalId(text) !== undefined || isReply(text)
   );
 
-  const id = approvalId(request.text);
-
-  if (id === undefined || !request.text.includes(code)) {
+  if (approvalId(confirmed.text) !== undefined) {
     throw new StageFailedError(
-      "ask",
-      `Shrok did not ask to approve a schedule with ${code}: ${request.text}`
+      "set",
+      `setting the schedule asked for approval: ${confirmed.text}`
     );
   }
-
-  const confirmed = await session.answer("set", id, "yes", REPLY_BUDGET_MS);
 
   if (confirmed.text.includes(code) && !confirmed.text.includes(clock)) {
     throw new StageFailedError(

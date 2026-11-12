@@ -12,6 +12,10 @@ import { defineTool } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Value } from "typebox/value";
 
+import { textOutcome } from "./approvals.ts";
+import { text as textResult } from "./output.ts";
+import type { ShrokTool } from "./policy.ts";
+import { wordsArg } from "./policy.ts";
 import type { PublicWeb } from "./public-web.ts";
 import type { SeenUrls } from "./seen-urls.ts";
 
@@ -157,7 +161,7 @@ interface WebSource {
   readonly title: string;
 }
 
-export interface WebSearchResult {
+interface WebSearchResult {
   readonly text: string;
   readonly sources: WebSource[];
   readonly usage: Usage;
@@ -329,56 +333,88 @@ const fetchPage = async (
     : page.text;
 };
 
+const siteOf = (url: string | undefined): string | undefined =>
+  url !== undefined && URL.canParse(url)
+    ? new URL(url).hostname.replace(/^www\./u, "")
+    : undefined;
+
+const MAX_QUERY_CHARS = 40;
+
 export const createWebTools = (
   searchModel: Model<Api>,
   publicWeb: PublicWeb,
   seenUrls: SeenUrls
-) => [
-  defineTool({
-    description:
-      "Search the web and get a short answer with its sources. Use it for anything current or anything you don't know.",
-    execute: async (args, api, context) => {
-      const result = await webSearch(api.models, searchModel, args.query, {
-        onProgress: (text) => {
-          api.output(`${text}\n`);
-        },
-        signal: context.abortSignal,
-      });
+): ShrokTool[] => [
+  {
+    describe: (args) => {
+      const query = wordsArg(args, "query");
 
-      // Only the sources: the answer is a model's text, which could repeat an address the query made up.
-      seenUrls.note(result.sources.map(({ url }) => url).join("\n"));
-
-      return {
-        output: [{ text: withSources(result), type: "text" as const }],
-        usage: result.usage,
-      };
+      return query === undefined
+        ? undefined
+        : `searching the web for "${query.slice(0, MAX_QUERY_CHARS)}${query.length > MAX_QUERY_CHARS ? "…" : ""}"`;
     },
-    name: "web_search",
-    parameters: Type.Object({
-      query: Type.String({ description: "What to find out, in plain words" }),
+    paid: { calls: 4 },
+    phrase: "searching the web",
+    tool: defineTool({
+      description:
+        "Search the web and get a short answer with its sources. Use it for anything current or anything you don't know.",
+      execute: async (args, api, context) => {
+        const result = await webSearch(api.models, searchModel, args.query, {
+          onProgress: (progress) => {
+            api.output(`${progress}\n`);
+          },
+          signal: context.abortSignal,
+        });
+
+        // Only the sources: the answer is a model's text, which could repeat an address the query made up.
+        seenUrls.note(result.sources.map(({ url }) => url).join("\n"));
+
+        return { ...textResult(withSources(result)), usage: result.usage };
+      },
+      name: "web_search",
+      parameters: Type.Object({
+        query: Type.String({ description: "What to find out, in plain words" }),
+      }),
+      replay: "safe",
     }),
-    replay: "safe",
-  }),
-  defineTool({
-    description:
-      "Open one web page and get its text as Markdown. Use it to read a page from a search result or a link. An address that neither the owner nor a tool gave waits for his /yes.",
-    execute: async (args, api, context) => {
-      const page = await seenUrls.open(
-        api,
-        "web_fetch",
-        args.url,
-        async () => await fetchPage(api.env, args.url, context, publicWeb),
-        context
-      );
+  },
+  {
+    describe: (args) => {
+      const site = siteOf(wordsArg(args, "url"));
 
-      seenUrls.note(page, args.url);
-
-      return { output: [{ text: page, type: "text" as const }] };
+      return site === undefined ? undefined : `reading ${site}`;
     },
-    name: "web_fetch",
-    parameters: Type.Object({
-      url: Type.String({ description: "The page's full http(s) URL" }),
+    flow: true,
+    phrase: "reading a page",
+    tool: defineTool({
+      description:
+        "Open one web page and get its text as Markdown. Use it to read a page from a search result or a link. An address that neither the owner nor a tool gave waits for his /yes.",
+      execute: async (args, api, context) =>
+        textOutcome(
+          await seenUrls.open(
+            api,
+            "web_fetch",
+            args.url,
+            context,
+            async (where) => {
+              const page = await fetchPage(
+                where.env,
+                args.url,
+                where.context,
+                publicWeb
+              );
+
+              seenUrls.note(page, args.url);
+
+              return page;
+            }
+          )
+        ),
+      name: "web_fetch",
+      parameters: Type.Object({
+        url: Type.String({ description: "The page's full http(s) URL" }),
+      }),
+      replay: "safe",
     }),
-    replay: "safe",
-  }),
+  },
 ];

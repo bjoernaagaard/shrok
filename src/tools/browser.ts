@@ -25,7 +25,11 @@ import { Value } from "typebox/value";
 
 import { report } from "../events.ts";
 import { browserPath, locale, timeZone } from "../settings.ts";
+import { quoted, textOutcome } from "./approvals.ts";
 import type { Approvals } from "./approvals.ts";
+import { text } from "./output.ts";
+import type { ShrokTool } from "./policy.ts";
+import { wordsArg } from "./policy.ts";
 import type { PublicWeb } from "./public-web.ts";
 import { publicUrl } from "./public-web.ts";
 import { safeEnv } from "./sandbox.ts";
@@ -364,10 +368,6 @@ export const settle = async (page: Page): Promise<number> => {
   return Date.now() - start;
 };
 
-const text = (value: string) => ({
-  output: [{ text: value, type: "text" as const }],
-});
-
 interface SnapshotNode {
   readonly children: SnapshotNode[];
   readonly line: string;
@@ -500,10 +500,8 @@ const GRID = [0.5, 0.25, 0.75, 0.1, 0.9] as const;
  * A point inside the element that a click would really land on. Playwright aims at the middle, and some sites put
  * a hidden 1px input there, which takes the click and ignores it.
  */
-const clickPoint = async (element: Locator) => {
-  await element.scrollIntoViewIfNeeded();
-
-  return await element.evaluate((node, fractions) => {
+const clickPoint = async (element: Locator) =>
+  await element.evaluate((node, fractions) => {
     const box = node.getBoundingClientRect();
 
     for (const fy of fractions) {
@@ -520,19 +518,37 @@ const clickPoint = async (element: Locator) => {
 
     return null;
   }, GRID);
-};
+
+const QUICK_ACTION_MS = 5000;
 
 /**
+ * Clicks like a person would: first where a click really lands, then through whatever covers the element, then as
+ * a DOM click. Pages that animate or cover their buttons, such as booking sites, often fail the first two.
  * Exported for tools built on the browser session.
  *
  * @public
  */
 export const clickElement = async (element: Locator) => {
-  const position = await clickPoint(element);
+  try {
+    await element.scrollIntoViewIfNeeded({ timeout: QUICK_ACTION_MS });
+    const position = await clickPoint(element);
 
-  // Nothing inside the element takes the click when an overlay covers all of it. A tap there still reaches the
-  // control under it, as on a pay-later option, so click through like a tap.
-  await element.click(position === null ? { force: true } : { position });
+    // Nothing inside the element takes the click when an overlay covers all of it. A tap there still reaches the
+    // control under it, as on a pay-later option, so click through like a tap.
+    await element.click(
+      position === null
+        ? { force: true, timeout: QUICK_ACTION_MS }
+        : { position, timeout: QUICK_ACTION_MS }
+    );
+  } catch {
+    try {
+      await element.click({ force: true, timeout: QUICK_ACTION_MS });
+    } catch {
+      await element.dispatchEvent("click", undefined, {
+        timeout: QUICK_ACTION_MS,
+      });
+    }
+  }
 };
 
 /**
@@ -544,7 +560,6 @@ const COMMIT_WORDS =
 
 const MAX_LABEL_CHARS = 120;
 const MAX_AROUND_CHARS = 2000;
-const MAX_SHOWN_AROUND_CHARS = 500;
 
 interface Commit {
   readonly label: string;
@@ -651,59 +666,85 @@ export const createBrowserTools = (
 ) => {
   const session = new Session(stateFile, publicWeb);
 
-  // Sites the owner let Shrok type on. A page can send what is typed into it to its site at once.
-  const typingHosts = new Set<string>();
-
+  /** A snapshot result, whose links count as seen. */
   const shown = (value: string) => {
     seenUrls.noteSnapshot(value);
 
     return text(value);
   };
 
-  const settled = async (page: Page) => {
-    const settleMs = await settle(page);
-
+  /** The page after it settles, as text the model reads; its cookies are saved. */
+  const settledText = async (page: Page): Promise<string> => {
+    await settle(page);
     await session.save();
 
-    return { ...shown(await snapshot(page)), details: { settleMs } };
+    const value = await snapshot(page);
+
+    seenUrls.noteSnapshot(value);
+
+    return value;
   };
 
-  return {
-    check: async () => {
-      await session.check();
-    },
-    close: async () => {
-      await session.close();
-    },
-    page: async () => await session.page(),
-    save: async () => {
-      await session.save();
-    },
-    tools: [
-      defineTool({
+  /**
+   * A failed page action leaves the page as it is, so the model gets the error with a fresh snapshot to choose its
+   * next step from, rather than a failed tool.
+   */
+  const recovering = async (
+    page: Page,
+    action: () => Promise<ReturnType<typeof text>>
+  ) => {
+    try {
+      return await action();
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message.split("\n")[0] : String(error);
+
+      return {
+        ...shown(`That did not work: ${reason}\n\n${await snapshot(page)}`),
+        isError: true,
+      };
+    }
+  };
+
+  const tools: ShrokTool[] = [
+    {
+      describe: (args) => {
+        const url = wordsArg(args, "url");
+
+        return url !== undefined && URL.canParse(url)
+          ? `reading ${new URL(url).hostname.replace(/^www\./u, "")}`
+          : undefined;
+      },
+      phrase: "opening a page",
+      tool: defineTool({
         description:
           "Open a web page in the browser and read it. Use for pages that need clicking, such as booking sites; for reading an article use web_fetch. An address that neither the owner nor a tool gave waits for his /yes.",
         execute: async (args, api, context) => {
           const page = await session.page();
 
-          await seenUrls.open(
-            api,
-            "browser_open",
-            args.url,
-            async () => {
-              await page.goto(publicUrl(args.url), {
-                waitUntil: "domcontentloaded",
-              });
-            },
-            context
-          );
+          return textOutcome(
+            await seenUrls.open(
+              api,
+              "browser_open",
+              args.url,
+              context,
+              async () => {
+                await page.goto(publicUrl(args.url), {
+                  waitUntil: "domcontentloaded",
+                });
 
-          return await settled(page);
+                return await settledText(page);
+              }
+            )
+          );
         },
         name: "browser_open",
         parameters: Type.Object({ url: Type.String() }),
       }),
-      defineTool({
+    },
+    {
+      phrase: "reading the page",
+      tool: defineTool({
         description:
           "Read the page open in the browser again, such as after waiting for it to update. With a ref, read that element in full, including the parts a long list had cut.",
         execute: async (args) => {
@@ -730,10 +771,13 @@ export const createBrowserTools = (
         }),
         replay: "safe",
       }),
-      defineTool({
+    },
+    {
+      phrase: "clicking on the page",
+      tool: defineTool({
         description:
-          "Click an element on the page open in the browser, by its ref from the latest snapshot. A button that submits a form, or a control that books, buys, pays, orders, subscribes, signs up, confirms or sends, waits for the owner's /yes.",
-        execute: async (args, api, context) => {
+          "Click an element on the page open in the browser, by its ref from the latest snapshot. Use it for buttons, links, checkboxes and radios. A button that submits a form, or a control that books, buys, pays, orders, subscribes, signs up, confirms or sends, waits for the owner's /yes unless he allowed it on that site for good.",
+        execute: async (args, api) => {
           const page = await session.page();
           const element = await find(page, args.ref);
 
@@ -742,67 +786,72 @@ export const createBrowserTools = (
           }
 
           if ((await commitButton(element)) === null) {
-            await clickElement(element);
+            return await recovering(page, async () => {
+              await clickElement(element);
 
-            return await settled(page);
+              return shown(await settledText(page));
+            });
           }
 
-          const prepare = async () => {
-            const target = await find(page, args.ref);
-
-            const button =
-              target === undefined ? null : await commitButton(target);
-
-            if (target === undefined || button === null) {
-              throw new Error(
-                "The page changed while waiting for approval. Read it again before asking."
-              );
-            }
-
-            const url = page.url();
-            const { host } = new URL(url);
-
-            const site =
-              button.site === host ? host : `${button.site}, inside ${host}`;
-
-            // The text around the button, such as the cart and its total, is rechecked after /yes, so the
-            // click fails if the page changed what the owner approved.
-            return {
-              adapter: "browser-commit-v1" as const,
-              arguments: args,
-              expectedState: { around: button.around, button: button.label },
-              identity: { title: await page.title(), url },
-              payload: {},
-              resource: { site },
-              summary: `press ${JSON.stringify(button.label)} on ${site}: ${args.element}\n\nThe page around it says: ${button.around.slice(0, MAX_SHOWN_AROUND_CHARS)}${button.around.length > MAX_SHOWN_AROUND_CHARS ? " (cut here; the rest is in the attached details)" : ""}`,
-              tool: "browser_click" as const,
-            };
-          };
-
-          await approvals.execute(
-            api,
-            prepare,
-            async () => {
+          return textOutcome(
+            await approvals.request(api, async () => {
               const target = await find(page, args.ref);
 
-              if (target === undefined) {
-                throw new Error("The approved button is gone.");
+              const button =
+                target === undefined ? null : await commitButton(target);
+
+              if (target === undefined || button === null) {
+                throw new Error(
+                  "the page changed while waiting for approval. Read it again before asking"
+                );
               }
 
-              await clickElement(target);
-            },
-            context.abortSignal
-          );
+              const url = page.url();
+              const { host } = new URL(url);
 
-          return await settled(page);
+              const site =
+                button.site === host ? host : `${button.site}, inside ${host}`;
+
+              // The text around the button, such as the cart and its total, is read again at /yes, so the
+              // click does not happen if the page changed what the owner approved.
+              return {
+                arguments: { ...args },
+                grants: [
+                  `pressing buttons that book, buy, pay, sign up or send on ${site}`,
+                ],
+                run: async () => {
+                  const approved = await find(page, args.ref);
+
+                  if (approved === undefined) {
+                    throw new Error("The approved button is gone.");
+                  }
+
+                  await clickElement(approved);
+
+                  return await settledText(page);
+                },
+                state: {
+                  around: button.around,
+                  button: button.label,
+                  title: await page.title(),
+                  url,
+                },
+                summary: `press ${quoted(button.label)} on ${site}: ${quoted(args.element)}\n\nThe page around it says: ${quoted(button.around)}`,
+                tool: "browser_click",
+              };
+            })
+          );
         },
         name: "browser_click",
         parameters: Type.Object(ElementParameters),
       }),
-      defineTool({
+    },
+    {
+      phrase: "typing on the page",
+      tool: defineTool({
         description:
-          "Type into a text field on the page open in the browser, replacing what it holds. This never presses Enter or submits a form. Use browser_click for submission buttons, checkboxes and radios. The first time on each site waits for the owner's /yes.",
-        execute: async (args, api, context) => {
+          "Type into a text field on the page open in the browser, replacing what it holds. This never presses Enter or submits a form; use browser_click for buttons, checkboxes and radios. Typing on a site waits for the owner's /yes the first time, unless he allowed typing there for good.",
+        execute: async (args, api) => {
           const page = await session.page();
           const field = await find(page, args.ref);
 
@@ -812,29 +861,36 @@ export const createBrowserTools = (
 
           const { host } = new URL(page.url());
 
-          if (!typingHosts.has(host)) {
-            await approvals.execute(
-              api,
-              () => ({
-                adapter: "browser-type-v1" as const,
-                arguments: { host },
-                expectedState: {},
-                identity: {},
-                payload: {},
-                resource: { site: host },
-                summary: `type into pages on ${host} until Shrok restarts, starting with ${args.element}`,
-                tool: "browser_type" as const,
-              }),
-              () => {
-                typingHosts.add(host);
+          // A page can send what is typed into it to its site at once, so the site needs the owner's consent.
+          return textOutcome(
+            await approvals.request(api, () => ({
+              arguments: { host, ref: args.ref, text: args.text },
+              grants: [`typing into pages on ${host}`],
+              run: async () => {
+                const target = await find(page, args.ref);
+
+                if (target === undefined) {
+                  throw new Error("The field is gone: the page changed.");
+                }
+
+                try {
+                  await target.fill(args.text);
+                } catch (error) {
+                  const reason =
+                    error instanceof Error
+                      ? error.message.split("\n")[0]
+                      : String(error);
+
+                  return `That did not work: ${reason}. Use browser_click for checkboxes, radios and buttons.\n\n${await snapshot(page)}`;
+                }
+
+                return await settledText(page);
               },
-              context.abortSignal
-            );
-          }
-
-          await field.fill(args.text);
-
-          return await settled(page);
+              state: {},
+              summary: `type ${quoted(args.text)} into ${quoted(args.element)} on ${host}`,
+              tool: "browser_type",
+            }))
+          );
         },
         name: "browser_type",
         parameters: Type.Object({
@@ -842,6 +898,25 @@ export const createBrowserTools = (
           text: Type.String(),
         }),
       }),
-    ],
+    },
+  ];
+
+  return {
+    check: async () => {
+      await session.check();
+    },
+    close: async () => {
+      await session.close();
+    },
+    page: async () => await session.page(),
+    save: async () => {
+      await session.save();
+    },
+    tools,
   };
 };
+
+/** What the tools prompt says about the browser. */
+export const BROWSER_PROMPT = `For a website that needs clicking, such as a booking page, use the browser_ tools: each returns the
+page's elements with refs, and browser_click and browser_type take a ref from the latest one. When an action fails,
+its result holds a fresh snapshot: pick the next step from that.`;

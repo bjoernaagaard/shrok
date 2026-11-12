@@ -10,6 +10,8 @@ import {
 
 import { PROMPT } from "../prompt.ts";
 import { localTime } from "../time.ts";
+import type { ShrokTool } from "../tools/policy.ts";
+import { registrations } from "../tools/policy.ts";
 import type { Memory } from "./memory.ts";
 
 const endsRun = (message: Message): boolean =>
@@ -28,8 +30,51 @@ const turnStart = (messages: readonly Message[]): number => {
   return 0;
 };
 
-export const createMemoryExtension = (memory: Memory) =>
-  defineExtension({
+export const createMemory = (memory: Memory) => {
+  const tools: ShrokTool[] = [
+    {
+      phrase: "remembering",
+      tool: defineTool({
+        description:
+          "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. n is a power of 2, and id a multiple of n.",
+        execute: async (args) => ({
+          output: [{ text: memory.zoom(args.id, args.n), type: "text" }],
+        }),
+        name: "zoom",
+        parameters: Type.Object({
+          id: Type.Integer({ minimum: 0 }),
+          n: Type.Integer({ minimum: 1 }),
+        }),
+        replay: "safe",
+      }),
+    },
+    {
+      phrase: "remembering",
+      tool: defineTool({
+        description: "The date and time of message id.",
+        execute: async (args) => {
+          const date = memory.date(args.id);
+
+          return {
+            output: [
+              {
+                text:
+                  date === undefined
+                    ? `No message ${args.id}.`
+                    : localTime.format(date),
+                type: "text",
+              },
+            ],
+          };
+        },
+        name: "date",
+        parameters: Type.Object({ id: Type.Integer({ minimum: 0 }) }),
+        replay: "safe",
+      }),
+    },
+  ];
+
+  const extension = defineExtension({
     hooks: [
       hook(GenerationTask, {
         beforeRequest: async ({ messages }, api) => {
@@ -69,40 +114,8 @@ export const createMemoryExtension = (memory: Memory) =>
     ],
     name: "memory",
     sections: [section("prompt", () => PROMPT, { tag: false })],
-    tools: [
-      defineTool({
-        description:
-          "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. n is a power of 2, and id a multiple of n.",
-        execute: async (args) => ({
-          output: [{ text: memory.zoom(args.id, args.n), type: "text" }],
-        }),
-        name: "zoom",
-        parameters: Type.Object({
-          id: Type.Integer({ minimum: 0 }),
-          n: Type.Integer({ minimum: 1 }),
-        }),
-        replay: "safe",
-      }),
-      defineTool({
-        description: "The date and time of message id.",
-        execute: async (args) => {
-          const date = memory.date(args.id);
-
-          return {
-            output: [
-              {
-                text:
-                  date === undefined
-                    ? `No message ${args.id}.`
-                    : localTime.format(date),
-                type: "text",
-              },
-            ],
-          };
-        },
-        name: "date",
-        parameters: Type.Object({ id: Type.Integer({ minimum: 0 }) }),
-        replay: "safe",
-      }),
-    ],
+    tools: registrations(tools),
   });
+
+  return { extension, tools };
+};

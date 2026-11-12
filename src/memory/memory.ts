@@ -10,6 +10,7 @@ import type {
 import { report } from "../events.ts";
 import { chatBlocks } from "./cache.ts";
 import {
+  bytes,
   compact,
   compressTask,
   LINE_BYTES,
@@ -27,23 +28,15 @@ import {
 } from "./view.ts";
 import type { Line } from "./view.ts";
 
-export interface MemorySizes {
-  readonly viewLowBytes: number;
-  readonly viewHighBytes: number;
-  readonly compactionLowBytes: number;
-  readonly compactionHighBytes: number;
-  readonly concurrency: number;
-  readonly summaryWaitMs: number;
-}
-
-export const OPTCHAT_SIZES: MemorySizes = {
+/** How big the view and the compaction context may grow before they merge lines, and how many summaries run at once. */
+const SIZES = {
   compactionHighBytes: 32_000,
   compactionLowBytes: 16_000,
   concurrency: 8,
   summaryWaitMs: 120_000,
   viewHighBytes: 128_000,
   viewLowBytes: 64_000,
-};
+} as const;
 
 const NOT_SUMMARIZED = "(not summarized yet: zoom it)";
 const LINE_BREAKS = /[\r\n\u2028\u2029\u0085]/gu;
@@ -54,8 +47,6 @@ const BUILD_RETRY_DELAY_MS = 60_000;
 
 const UNAVAILABLE_SUMMARY =
   "Summary unavailable after repeated failures. Use zoom for retained source messages.";
-
-const bytes = (text: string): number => Buffer.byteLength(text, "utf-8");
 
 const lineName = (line: Line): string =>
   `${firstMessage(line)}+${lineSize(line)}`;
@@ -78,7 +69,6 @@ export class Memory {
   readonly #store: MemoryStore;
   readonly #models: Models;
   readonly #model: Model<Api>;
-  readonly #sizes: MemorySizes;
   readonly #texts = new Map<string, string>();
   readonly #queue: Line[] = [];
   readonly #queued = new Set<string>();
@@ -94,16 +84,10 @@ export class Memory {
   #compactionShrinking = false;
   #closed = false;
 
-  constructor(
-    store: MemoryStore,
-    models: Models,
-    model: Model<Api>,
-    sizes: MemorySizes
-  ) {
+  constructor(store: MemoryStore, models: Models, model: Model<Api>) {
     this.#store = store;
     this.#models = models;
     this.#model = model;
-    this.#sizes = sizes;
     this.#view = this.#cut(store.lines("view"), store.messageCount());
     this.#compactionView = this.#cut(
       store.lines("compactionView"),
@@ -342,7 +326,7 @@ export class Memory {
     }
 
     const { promise, resolve } = Promise.withResolvers<undefined>();
-    const timer = setTimeout(resolve, this.#sizes.summaryWaitMs);
+    const timer = setTimeout(resolve, SIZES.summaryWaitMs);
 
     const waiter = {
       resolve: () => {
@@ -378,7 +362,7 @@ export class Memory {
   }
 
   #pump(): void {
-    while (!this.#closed && this.#running.size < this.#sizes.concurrency) {
+    while (!this.#closed && this.#running.size < SIZES.concurrency) {
       const line = this.#queue.shift();
 
       if (line === undefined) {
@@ -553,7 +537,7 @@ export class Memory {
     const total = this.#inView;
     const viewBefore = this.#view.length;
 
-    if (this.#bytes(this.#view) > this.#sizes.viewHighBytes) {
+    if (this.#bytes(this.#view) > SIZES.viewHighBytes) {
       this.#viewShrinking = true;
     }
 
@@ -562,16 +546,16 @@ export class Memory {
         this.#view,
         total,
         this.#built,
-        (view) => this.#bytes(view) > this.#sizes.viewLowBytes
+        (view) => this.#bytes(view) > SIZES.viewLowBytes
       );
-      this.#viewShrinking = this.#bytes(this.#view) > this.#sizes.viewLowBytes;
+      this.#viewShrinking = this.#bytes(this.#view) > SIZES.viewLowBytes;
     }
 
     const viewMerged = this.#view.length !== viewBefore;
 
     if (
       viewMerged ||
-      this.#bytes(this.#compactionView) > this.#sizes.compactionHighBytes
+      this.#bytes(this.#compactionView) > SIZES.compactionHighBytes
     ) {
       this.#compactionShrinking = true;
     }
@@ -583,10 +567,10 @@ export class Memory {
         source,
         total,
         this.#built,
-        (view) => this.#bytes(view) > this.#sizes.compactionLowBytes
+        (view) => this.#bytes(view) > SIZES.compactionLowBytes
       );
       this.#compactionShrinking =
-        this.#bytes(this.#compactionView) > this.#sizes.compactionLowBytes;
+        this.#bytes(this.#compactionView) > SIZES.compactionLowBytes;
     }
 
     this.#store.saveLines("view", this.#view);

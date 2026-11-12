@@ -14,8 +14,6 @@ Each message has a kind:
 - shrok: Shrok's replies
 - tool: Shrok's tool calls
 - echo: tool results
-- work: an agent's report, starting "[Name]"
-- note: memories from before this chat
 
 The summaries form a binary tree: each message is compressed into a line (a
 short message is its own line), then adjacent lines are merged in pairs, again

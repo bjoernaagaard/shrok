@@ -308,31 +308,27 @@ const calendar = async () => {
   return added.first.text;
 };
 
-/** A schedule waits for /yes, and /no sets nothing. */
+/** Shrok sets a schedule without asking, says so, and lists it. */
 const schedule = async () => {
   const scheduled = await turn(
     "schedule",
     `Remind me tomorrow at 09:00 to water the plants. Put the code ${code} in the reminder.`
   );
 
-  if (scheduled.id === undefined || !scheduled.first.text.includes(code)) {
-    fail("schedule", `the schedule did not ask: ${scheduled.first.text}`);
+  if (scheduled.id !== undefined) {
+    fail(
+      "schedule",
+      `setting a schedule asked for approval: ${scheduled.first.text}`
+    );
   }
-
-  const declined = await session.answer(
-    "schedule",
-    scheduled.id ?? "",
-    "no",
-    STEP_BUDGET_MS
-  );
 
   const listed = await turn("schedule-list", "Which schedules are set now?");
 
-  if (listed.first.text.includes(code)) {
-    fail("schedule-list", `a declined schedule is set: ${listed.first.text}`);
+  if (!listed.first.text.includes(code)) {
+    fail("schedule-list", `the schedule is not listed: ${listed.first.text}`);
   }
 
-  return declined.text;
+  return scheduled.first.text;
 };
 
 /** A new owner stops the work the previous owner started. */

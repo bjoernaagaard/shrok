@@ -6,9 +6,15 @@ import process from "node:process";
 import { whichSync } from "@anthropic-ai/sandbox-runtime/dist/utils/which.js";
 
 import { dataDir, setting } from "./data-dir.ts";
-import { loadSecretFiles } from "./secrets.ts";
+import { INTEGRATIONS } from "./integrations.ts";
+import type { Integration } from "./integrations.ts";
+import { loadSecrets } from "./secrets.ts";
 
-loadSecretFiles();
+// Before anything reads a setting: secret files fill the environment that every other module reads.
+loadSecrets(dataDir);
+
+/** Read settings from here, so importing this module guarantees the secret files are loaded first. */
+export { setting } from "./data-dir.ts";
 
 const POSIX_LOCALES = new Set(["C", "POSIX"]);
 const LOCALE_SUFFIX = /[.@].*$/u;
@@ -123,10 +129,9 @@ export const mcpConfig = path.resolve(
 /** A browser binary to use instead of the one Shrok picks. */
 export const browserPath = setting("SHROK_BROWSER");
 
-export const integrations = {
-  google: configured("gws", [
-    "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
-    "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-  ]),
-  x: configured("xurl", ["XURL_CLIENT_ID", "XURL_CLIENT_SECRET"]),
-} as const;
+/** The integrations that are installed and configured. */
+export const integrations: ReadonlySet<Integration> = new Set(
+  INTEGRATIONS.filter(({ keys, program }) => configured(program, keys)).map(
+    ({ name }) => name
+  )
+);

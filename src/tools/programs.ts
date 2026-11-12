@@ -9,49 +9,33 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 import { dataDir } from "../data-dir.ts";
+import { INTEGRATIONS } from "../integrations.ts";
+import type { Program } from "../integrations.ts";
 import { integrations } from "../settings.ts";
+import { textOutcome } from "./approvals.ts";
 import type { Approvals } from "./approvals.ts";
+import type { ShrokTool } from "./policy.ts";
 import { safeEnv } from "./sandbox.ts";
 
-const PROGRAMS = {
-  gws: {
-    description:
-      "Google Workspace: Gmail, Calendar, Drive. Run `gws --help` or `gws <service> --help` first.",
-    env: [
-      "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
-      "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-    ],
-  },
-  xurl: {
-    description:
-      "X (Twitter) API, like curl: `xurl /2/tweets/<id>`. Run `xurl --help` first. Each post read costs money.",
-    env: ["XURL_CLIENT_ID", "XURL_CLIENT_SECRET"],
-  },
-} as const;
-
-type ProgramName = keyof typeof PROGRAMS;
-
-const INTEGRATION: Record<ProgramName, keyof typeof integrations> = {
-  gws: "google",
-  xurl: "x",
-};
-
-/** Only the programs that are installed and configured. */
-const NAMES: readonly ProgramName[] = (["gws", "xurl"] as const).filter(
-  (name) => integrations[INTEGRATION[name]]
-);
-
 const TIMEOUT_SECONDS = 120;
+const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 // gws loads a .env file from its working folder and the folders above it, so it must never start in the
 // workspace, which the model can write to. Tools cannot write in the data folder.
 const PROGRAM_DIR = dataDir;
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 
-const programEnv = (program: ProgramName): Record<string, string> => {
+const integrationOf = (program: Program) =>
+  INTEGRATIONS.find((each) => each.program === program);
+
+/** The installed and configured programs. */
+const PROGRAMS: readonly Program[] = INTEGRATIONS.flatMap(
+  ({ name, program }) => (integrations.has(name) ? [program] : [])
+);
+
+const programEnv = (program: Program): Record<string, string> => {
   const env = safeEnv();
 
-  for (const key of PROGRAMS[program].env) {
+  for (const key of integrationOf(program)?.keys ?? []) {
     const value = process.env[key];
 
     if (value !== undefined) {
@@ -62,40 +46,41 @@ const programEnv = (program: ProgramName): Record<string, string> => {
   return env;
 };
 
-export const typed = <T extends TSchema>(schema: T, value: Static<T>) => ({
-  output: [{ text: JSON.stringify(value, null, 2), type: "text" as const }],
-  structuredOutput: Value.Parse(schema, value),
-});
+interface Output {
+  stdout: string;
+  stderr: string;
+}
 
-export const programJson = async <T extends TSchema>(
-  program: ProgramName,
-  schema: T,
+/** Runs a program with the owner's login, outside the sandbox, with a time and output limit. */
+const runProgram = async (
+  argv: readonly [Program, ...string[]],
   env: ExecutionEnv | undefined,
-  args: string[],
-  context: Context
-): Promise<Static<T>> => {
+  context: Context,
+  onOutput?: (text: string) => void
+): Promise<{ exitCode: number; output: Output }> => {
   if (env === undefined) {
-    throw new Error(`${program} needs an execution environment.`);
+    throw new Error(`${argv[0]} needs an execution environment.`);
   }
 
-  const out = { stderr: "", stdout: "" };
+  const output: Output = { stderr: "", stdout: "" };
   let outputBytes = 0;
 
   const result = await env.exec(
-    [program, ...args],
+    [...argv],
     {
       cwd: PROGRAM_DIR,
-      env: programEnv(program),
+      env: programEnv(argv[0]),
       inheritEnv: false,
       onOutput: (text, _context, { stream }) => {
         outputBytes += Buffer.byteLength(text, "utf-8");
 
         if (outputBytes > MAX_OUTPUT_BYTES) {
           // The execution environment kills the child tree when this callback throws.
-          throw new Error(`${program} exceeded its output byte limit.`);
+          throw new Error(`${argv[0]} exceeded its output byte limit.`);
         }
 
-        out[stream] += text;
+        output[stream] += text;
+        onOutput?.(text);
       },
       timeout: TIMEOUT_SECONDS,
     },
@@ -103,96 +88,91 @@ export const programJson = async <T extends TSchema>(
   );
 
   if (!result.ok) {
-    throw new Error(`${program} did not run: ${result.error.message}`);
+    throw new Error(`${argv[0]} did not run: ${result.error.message}`);
   }
 
-  if (result.value.exitCode !== 0) {
-    throw new Error(`${program} failed: ${(out.stdout || out.stderr).trim()}`);
+  return { exitCode: result.value.exitCode, output };
+};
+
+const PLAIN_WORD = /^[\w@%+=:,./-]+$/u;
+const MAX_SHOWN_COMMAND_CHARS = 2000;
+
+/** The command as the owner reads it: plain words as they are, anything else quoted, so no argument can pose as another. */
+const commandLine = (argv: readonly string[]): string => {
+  const line = argv
+    .map((arg) => (PLAIN_WORD.test(arg) ? arg : JSON.stringify(arg)))
+    .join(" ");
+
+  return line.length > MAX_SHOWN_COMMAND_CHARS
+    ? `${line.slice(0, MAX_SHOWN_COMMAND_CHARS)} (cut here; the rest is in the attached details)`
+    : line;
+};
+
+export const programJson = async <T extends TSchema>(
+  program: Program,
+  schema: T,
+  env: ExecutionEnv | undefined,
+  args: string[],
+  context: Context
+): Promise<Static<T>> => {
+  const { exitCode, output } = await runProgram(
+    [program, ...args],
+    env,
+    context
+  );
+
+  if (exitCode !== 0) {
+    throw new Error(
+      `${program} failed: ${(output.stdout || output.stderr).trim()}`
+    );
   }
 
-  // A gws search that finds nothing prints its notice to stderr and nothing to stdout.
+  // A gws search that finds nothing, or a call with no response body, prints nothing to stdout.
   return Value.Parse(
     schema,
-    JSON.parse(out.stdout.trim() === "" ? "{}" : out.stdout)
+    JSON.parse(output.stdout.trim() === "" ? "{}" : output.stdout)
   );
 };
 
-const createProgramsTool = (approvals: Approvals) =>
-  defineTool({
-    description: `Run a program that uses the user's own login, outside the bash sandbox, with arguments only (no shell). Every run waits for the owner's /yes on the exact command, so prefer a typed tool when one fits. Programs:\n${NAMES.map((name) => `- ${name}: ${PROGRAMS[name].description}`).join("\n")}`,
-    execute: async (args, api, context) => {
-      const { env } = api;
+export const createProgramsTools = (approvals: Approvals): ShrokTool[] =>
+  PROGRAMS.length === 0
+    ? []
+    : [
+        {
+          describe: (args) => (args.program === "xurl" ? "using X" : undefined),
+          phrase: "using Google",
+          tool: defineTool({
+            description: `Run a program that uses the user's own login, outside the bash sandbox, with arguments only (no shell). Each run waits for the owner's /yes on the exact command, unless he allowed that exact command for good, so prefer a typed tool when one fits. Programs:\n${PROGRAMS.map((program) => `- ${program}: ${integrationOf(program)?.description ?? ""}`).join("\n")}`,
+            execute: async (args, api) => {
+              const argv: [Program, ...string[]] = [args.program, ...args.args];
 
-      if (env === undefined) {
-        throw new Error("run_program needs an execution environment.");
-      }
+              return textOutcome(
+                await approvals.request(api, () => ({
+                  arguments: { args: args.args, program: args.program },
+                  grants: [`running exactly ${JSON.stringify(argv)}`],
+                  run: async ({ context, env }) => {
+                    const { exitCode, output } = await runProgram(
+                      argv,
+                      env,
+                      context
+                    );
 
-      let exitCode: number | undefined;
-
-      await approvals.execute(
-        api,
-        () => ({
-          adapter: "program-run-v1" as const,
-          arguments: { args: args.args, program: args.program },
-          expectedState: {},
-          identity: { program: args.program },
-          payload: { argv: [args.program, ...args.args] },
-          resource: { program: args.program },
-          summary: `run ${args.program} with your login, outside the sandbox, exactly as ${JSON.stringify([args.program, ...args.args])}`,
-          tool: "run_program" as const,
-        }),
-        async (action) => {
-          let outputBytes = 0;
-
-          const result = await env.exec(
-            action.payload.argv,
-            {
-              cwd: PROGRAM_DIR,
-              env: programEnv(args.program),
-              inheritEnv: false,
-              onOutput: (text) => {
-                outputBytes += Buffer.byteLength(text, "utf-8");
-
-                if (outputBytes > MAX_OUTPUT_BYTES) {
-                  // The execution environment kills the child tree when this callback throws.
-                  throw new Error(
-                    `${args.program} exceeded its output byte limit.`
-                  );
-                }
-
-                api.output(text);
-              },
-              timeout: TIMEOUT_SECONDS,
+                    return `Exit code ${exitCode}.\n\n${output.stdout}${output.stderr === "" ? "" : `\n\nstderr:\n${output.stderr}`}`;
+                  },
+                  state: {},
+                  summary: `run ${args.program} with your login, outside the sandbox, exactly as: ${commandLine(argv)}`,
+                  tool: "run_program",
+                }))
+              );
             },
-            context
-          );
-
-          if (!result.ok) {
-            throw new Error(
-              `${args.program} did not run: ${result.error.message}`
-            );
-          }
-
-          ({ exitCode } = result.value);
+            name: "run_program",
+            parameters: Type.Object({
+              args: Type.Array(Type.String(), {
+                description:
+                  "Arguments, one per item, exactly as the program takes them",
+              }),
+              program: StringEnum(PROGRAMS),
+            }),
+          }),
         },
-        context.abortSignal
-      );
-
-      if (exitCode === undefined) {
-        throw new Error("The approved command did not run.");
-      }
-
-      return { isError: exitCode !== 0 };
-    },
-    name: "run_program",
-    parameters: Type.Object({
-      args: Type.Array(Type.String(), {
-        description:
-          "Arguments, one per item, exactly as the program takes them",
-      }),
-      program: StringEnum(NAMES),
-    }),
-  });
-
-export const createProgramsTools = (approvals: Approvals) =>
-  NAMES.length === 0 ? [] : [createProgramsTool(approvals)];
+      ];

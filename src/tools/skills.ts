@@ -6,6 +6,8 @@ import type { Static } from "typebox";
 import { Value } from "typebox/value";
 import { parse } from "yaml";
 
+import { INTEGRATIONS } from "../integrations.ts";
+import type { Integration } from "../integrations.ts";
 import { integrations } from "../settings.ts";
 
 const MAX_NAME_LENGTH = 64;
@@ -232,16 +234,18 @@ export const BUNDLED_SKILLS = path.resolve(
 );
 
 /** Bundled skills about an integration that isn't set up would point at tools Shrok doesn't have. */
-const BUNDLED_NEEDS = new Map<string, keyof typeof integrations>([
-  ["calendar", "google"],
-  ["gmail", "google"],
-  ["x-posts", "x"],
-]);
+const BUNDLED_NEEDS = new Map<string, Integration>(
+  INTEGRATIONS.flatMap(({ name, skills }) =>
+    skills.map((skill) => [skill, name] as const)
+  )
+);
 
 const usable = (dir: string, skill: Skill): boolean => {
   const needs = BUNDLED_NEEDS.get(skill.name);
 
-  return dir !== BUNDLED_SKILLS || needs === undefined || integrations[needs];
+  return (
+    dir !== BUNDLED_SKILLS || needs === undefined || integrations.has(needs)
+  );
 };
 
 export const loadSkills = (dirs: readonly string[]): LoadSkillsResult => {

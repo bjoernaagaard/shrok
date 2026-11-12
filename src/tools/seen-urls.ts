@@ -1,6 +1,8 @@
 import type { Context } from "@earendil-works/chord";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 
-import type { Approvals, Call } from "./approvals.ts";
+import { quoted } from "./approvals.ts";
+import type { Approvals, Call, Outcome } from "./approvals.ts";
 
 const MAX_SEEN = 50_000;
 const ABSOLUTE = /https?:\/\/[^\s<>"'`)\]}|]+/giu;
@@ -25,10 +27,16 @@ const canonical = (url: string, base?: string): string | undefined => {
   }
 };
 
+/** Where an opened page loads: the tool's own environment, or the approvals' when it opens after a /yes. */
+type Open = (where: {
+  readonly env: ExecutionEnv | undefined;
+  readonly context: Context;
+}) => Promise<string>;
+
 /**
  * Web addresses the owner sent or a tool showed. web_fetch and browser_open open these without asking.
  * Any other address was written by the model, and so could carry private data it read to a third party
- * in its path or query. Opening one waits for the owner's /yes to the exact address.
+ * in its path or query. Opening one waits for the owner's /yes to the exact address, unless he allowed the site.
  */
 export class SeenUrls {
   readonly #urls = new Set<string>();
@@ -86,44 +94,29 @@ export class SeenUrls {
     }
   }
 
-  /** Runs `open` for `url` at once if it was seen, or after the owner's /yes to it otherwise. */
-  async open<T>(
-    call: Call,
+  /** Opens a seen address at once, and any other after the owner's /yes to it. */
+  async open(
+    call: Call & { readonly env: ExecutionEnv | undefined },
     tool: "web_fetch" | "browser_open",
     url: string,
-    open: () => Promise<T>,
-    context: Context
-  ): Promise<T> {
+    context: Context,
+    open: Open
+  ): Promise<Outcome> {
     const href = canonical(url);
 
     if (href !== undefined && this.#urls.has(href)) {
-      return await open();
+      return { ran: true, result: await open({ context, env: call.env }) };
     }
 
-    let opened: { value: T } | undefined;
+    const host = href === undefined ? url : new URL(href).host;
 
-    await this.#approvals.execute(
-      call,
-      () => ({
-        adapter: "web-open-v1" as const,
-        arguments: { url },
-        expectedState: {},
-        identity: {},
-        payload: {},
-        resource: { url },
-        summary: `open an address that neither you nor a page gave me: ${url}`,
-        tool,
-      }),
-      async () => {
-        opened = { value: await open() };
-      },
-      context.abortSignal
-    );
-
-    if (opened === undefined) {
-      throw new Error(`${url} was not opened.`);
-    }
-
-    return opened.value;
+    return await this.#approvals.request(call, () => ({
+      arguments: { url },
+      grants: [`opening any address on ${host}`],
+      run: async (where) => await open(where),
+      state: {},
+      summary: `open an address that neither you nor a page gave me: ${quoted(url, 2000)}`,
+      tool,
+    }));
   }
 }

@@ -6,30 +6,31 @@ import {
   createRegistry,
   Harness,
 } from "@earendil-works/pi-durable";
-import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 
-import { createCodemodeSandbox } from "./codemode.ts";
-import { createFlowsExtension } from "./flows.ts";
+import { createCodemode } from "./codemode.ts";
+import { ask } from "./conversation.ts";
+import { createFlows } from "./flows.ts";
 import { Items } from "./items.ts";
+import type { Layout } from "./layout.ts";
 import { loadLocalTools } from "./local-tools.ts";
-import { createMemoryExtension } from "./memory/extension.ts";
-import { Memory, OPTCHAT_SIZES } from "./memory/memory.ts";
+import { markViewCache } from "./memory/cache.ts";
+import { createMemory } from "./memory/extension.ts";
+import { Memory } from "./memory/memory.ts";
 import { MemoryStore } from "./memory/store.ts";
 import { createShrokModels } from "./models.ts";
 import { Partials } from "./partials.ts";
 import type { ShowProgress } from "./partials.ts";
-import { answerText, createSchedulesExtension } from "./schedules.ts";
+import { createSchedules } from "./schedules.ts";
 import type { Notify } from "./schedules.ts";
 import { mcpConfig } from "./settings.ts";
-import { localTime } from "./time.ts";
 import type { Approvals } from "./tools/approvals.ts";
 import { createBrowserTools } from "./tools/browser.ts";
-import { createToolsExtension } from "./tools/extension.ts";
-import { restrictTools } from "./tools/judge.ts";
+import { createTools } from "./tools/extension.ts";
+import { createGuard } from "./tools/guard.ts";
 import { connectMcpServers } from "./tools/mcp.ts";
+import { ToolCatalog } from "./tools/policy.ts";
 import { openPublicWeb } from "./tools/public-web.ts";
 import { startSandbox, stopSandbox } from "./tools/sandbox.ts";
 import { SeenUrls } from "./tools/seen-urls.ts";
@@ -42,10 +43,19 @@ import {
 
 const context = BACKGROUND_CONTEXT;
 
+/**
+ * Retries of a failed model call. Anthropic's rate limits refill per minute, and pi-durable's default gives up
+ * after about 14 s, so a burst, such as several shared links at once, lost its answers.
+ */
+const RETRY = { baseDelayMs: 5000, maxAgentDelayMs: 120_000, maxRetries: 8 };
+
 interface Outbox {
   readonly notify: Notify;
   readonly sendFile: SendFile;
 }
+
+/** How a request with a given ID ended: answered, given up on, or not asked yet. */
+type Settled = "done" | "unanswered" | undefined;
 
 export interface Brain {
   /**
@@ -58,8 +68,7 @@ export interface Brain {
     sentAt: Date,
     show?: ShowProgress
   ) => Promise<string>;
-  /** True once what was submitted with `requestId` has its final answer, or none it ever will. */
-  finished: (requestId: string) => Promise<boolean>;
+  settled: (requestId: string) => Promise<Settled>;
   /** Stops the work in progress; false when nothing was running. Schedules keep their times. */
   stop: () => Promise<boolean>;
   attach: (outbox: Outbox) => void;
@@ -72,24 +81,22 @@ const unansweredText = (reason: string): string =>
     : `I couldn't finish this (${reason}). Send it again to retry.`;
 
 export const openBrain = async (
-  dataDir: string,
+  layout: Layout,
   approvals: Approvals
 ): Promise<Brain> => {
   const { chatModel, classifier, models, smallModel } =
-    await createShrokModels();
+    await createShrokModels(markViewCache);
 
-  const workspace = path.join(dataDir, "workspace");
-  const skillsDir = path.join(workspace, "skills");
   const mcp = await connectMcpServers(mcpConfig);
+  const publicWeb = await openPublicWeb(layout.dataDir);
 
-  await startSandbox(dataDir, workspace);
+  await startSandbox(layout, publicWeb.bashProxyPort);
 
-  const items = new Items(workspace);
-  const publicWeb = await openPublicWeb(dataDir);
+  const items = new Items(layout);
   const seenUrls = new SeenUrls(approvals);
 
   const browser = createBrowserTools(
-    path.join(dataDir, "browser", "state.json"),
+    path.join(layout.dataDir, "browser", "state.json"),
     publicWeb,
     approvals,
     seenUrls
@@ -97,50 +104,62 @@ export const openBrain = async (
 
   await browser.check();
 
-  const local = await loadLocalTools(browser, approvals);
-  const localAllowed = new Set(local.allowed);
+  const local = await loadLocalTools({ approvals, browser });
 
   const memory = new Memory(
-    new MemoryStore(path.join(dataDir, "memory.sqlite")),
+    new MemoryStore(path.join(layout.dataDir, "memory.sqlite")),
     models,
-    smallModel,
-    OPTCHAT_SIZES
+    smallModel
   );
 
-  const registry = createRegistry();
   const fileSender = Promise.withResolvers<SendFile>();
+  const catalog = new ToolCatalog();
+  const remembering = createMemory(memory);
+  const schedules = createSchedules();
+  const codemode = createCodemode(mcp.namespaces);
 
-  registry.install(createMemoryExtension(memory));
-  registry.install(
-    createToolsExtension({
-      allowed: localAllowed,
-      approvals,
-      browserTools: [...browser.tools, ...local.tools],
-      dataDir,
-      fileSender: fileSender.promise,
-      items,
-      mcpTools: mcp.tools,
-      publicWeb,
-      searchModel: smallModel,
-      seenUrls,
-      textModel: smallModel,
-      workspace,
-    })
+  const tools = createTools({
+    approvals,
+    browserTools: [...browser.tools, ...local.tools],
+    fileSender: fileSender.promise,
+    items,
+    layout,
+    mcpTools: mcp.tools,
+    publicWeb,
+    seenUrls,
+    smallModel,
+  });
+
+  const flows = createFlows(
+    layout,
+    codemode.options,
+    approvals,
+    classifier,
+    catalog
   );
-  const schedules = createSchedulesExtension(approvals);
 
-  registry.install(schedules.extension);
+  catalog.add([
+    ...remembering.tools,
+    ...schedules.tools,
+    ...codemode.policies,
+    ...tools.tools,
+    ...flows.tools,
+    ...(local.policies ?? []),
+  ]);
 
-  const codemode = {
-    namespaces: mcp.namespaces,
-    sandbox: createCodemodeSandbox(),
-  };
+  const guard = createGuard(catalog, tools.problem);
+  const registry = createRegistry();
 
-  registry.install(createToolSearchExtension());
-  registry.install(createCodemodeExtension(codemode));
-  registry.install(
-    createFlowsExtension(workspace, codemode, approvals, classifier)
-  );
+  for (const extension of [
+    remembering.extension,
+    tools.extension,
+    schedules.extension,
+    ...codemode.extensions,
+    flows.extension,
+    guard.extension,
+  ]) {
+    registry.install(extension);
+  }
 
   const names = new Set<string>();
 
@@ -155,21 +174,21 @@ export const openBrain = async (
 
     registry.install({
       ...extension,
-      tools: restrictTools(extension.tools ?? [], localAllowed),
+      tools: guard.guard(extension.tools ?? []),
     });
   }
 
   const storage = await openNodeSqliteStorage(
-    path.join(dataDir, "shrok.sqlite")
+    path.join(layout.dataDir, "shrok.sqlite")
   );
 
   const harness = await Harness.open(
     storage,
     {
-      env: () => new NodeExecutionEnv({ cwd: workspace }),
+      env: () => new NodeExecutionEnv({ cwd: layout.workspace }),
       models,
       registry,
-      settings: { compaction: { enabled: false } },
+      settings: { compaction: { enabled: false }, retry: RETRY },
     },
     context
   );
@@ -178,7 +197,7 @@ export const openBrain = async (
 
   await root.configure({ model: chatModel }, context);
 
-  const partials = new Partials(local.phrases ?? {});
+  const partials = new Partials((name, args) => catalog.phrase(name, args));
 
   await partials.attach(harness, root.id, context);
   harness.resume();
@@ -191,37 +210,43 @@ export const openBrain = async (
   ): Promise<string> => {
     seenUrls.note(text);
 
-    const submission = await root.submit(
+    let listened: Parameters<Partials["forget"]>[0] | undefined;
+
+    const answered = await ask(
       {
-        content: `<sent>${localTime.format(sentAt)}</sent>\n\n${expandSkillCommand(text, loadSkills([skillsDir, BUNDLED_SKILLS]).skills)}`,
-        requestId,
-        type: "input",
+        answerOf: async (id) => {
+          const entry = await root.commit(
+            async (tx) => await tx.entry(AssistantEntry, id),
+            context
+          );
+
+          return entry?.model;
+        },
+        submit: async (draft, submitContext) =>
+          await root.submit(draft, submitContext),
       },
-      context
-    );
-
-    if (show !== undefined) {
-      partials.listen(submission.id, show);
-    }
-
-    const settled = await submission.wait(context).finally(() => {
-      partials.forget(submission.id);
+      {
+        requestId,
+        sentAt,
+        text: expandSkillCommand(
+          text,
+          loadSkills([layout.skills, BUNDLED_SKILLS]).skills
+        ),
+      },
+      context,
+      (submission) => {
+        if (show !== undefined) {
+          listened = submission.id;
+          partials.listen(submission.id, show);
+        }
+      }
+    ).finally(() => {
+      if (listened !== undefined) {
+        partials.forget(listened);
+      }
     });
 
-    if (settled.status !== "done" || settled.type !== "input") {
-      return unansweredText(
-        settled.status === "unanswered" ? settled.reason : settled.status
-      );
-    }
-
-    const answerId = settled.answer;
-
-    const entry = await root.commit(
-      async (tx) => await tx.entry(AssistantEntry, answerId),
-      context
-    );
-
-    return answerText(entry?.model);
+    return answered.answered ? answered.text : unansweredText(answered.reason);
   };
 
   return {
@@ -233,7 +258,7 @@ export const openBrain = async (
     close: async () => {
       await partials.close();
       await harness.close(context);
-      await codemode.sandbox.close();
+      await codemode.options.sandbox.close();
       await memory.close();
       await mcp.close();
       await browser.close();
@@ -241,16 +266,17 @@ export const openBrain = async (
       await stopSandbox();
       items.close();
     },
-    finished: async (requestId) => {
+    settled: async (requestId) => {
       const submission = await storage.submissionByRequest(
         root.id,
         requestId,
         context
       );
 
-      return (
-        submission?.status === "done" || submission?.status === "unanswered"
-      );
+      return submission?.status === "done" ||
+        submission?.status === "unanswered"
+        ? submission.status
+        : undefined;
     },
     stop: async () => {
       const busy = partials.busy();

@@ -1,12 +1,11 @@
 import type { Message } from "@earendil-works/pi-ai";
 
+import { SENT_FRAME } from "../conversation.ts";
 import type { NewLogMessage } from "./store.ts";
 
 const TOOL_OUTPUT_CHARS = 30_000;
 
 const LOG_PAGE_CHARS = 30_000;
-
-const SENT_TAG = /^<sent>[^<]*<\/sent>\s*/u;
 
 const clip = (text: string): string => {
   if (text.length <= TOOL_OUTPUT_CHARS) {
@@ -56,7 +55,7 @@ export const toLogMessages = (
   if (message.role === "user") {
     add(
       "user",
-      userText(message.content).replace(SENT_TAG, ""),
+      userText(message.content).replace(SENT_FRAME, ""),
       message.timestamp
     );
   } else if (message.role === "assistant") {

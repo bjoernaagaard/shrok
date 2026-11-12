@@ -80,6 +80,8 @@ export interface PublicWeb {
   };
   readonly fetchArgs: (url: string) => { argv: string[]; done: () => void };
   readonly fetchEnv: Record<string, string>;
+  /** The same proxy without a credential, for bash's sandbox, which cannot pass one. */
+  readonly bashProxyPort: number;
   readonly close: () => Promise<void>;
 }
 
@@ -124,33 +126,54 @@ export const openPublicWeb = async (dataDir: string): Promise<PublicWeb> => {
 
   const proxyAuthToken = randomBytes(PROXY_AUTH_TOKEN_BYTES).toString("hex");
 
-  const server = createHttpProxyServer({
-    // An IP literal is judged here, as the guard never judges one. `localhost` is refused by name, as the guard
-    // lets it resolve to loopback.
-    filter: (port, host, _socket, _command, explain) => {
-      const canonical = canonicalizeHost(host);
+  // An IP literal is judged here, as the guard never judges one. `localhost` is refused by name, as the guard
+  // lets it resolve to loopback.
+  const filter: Parameters<typeof createHttpProxyServer>[0]["filter"] = (
+    port,
+    host,
+    _socket,
+    _command,
+    explain
+  ) => {
+    const canonical = canonicalizeHost(host);
 
-      const allowed =
-        canonical !== undefined &&
-        !isLoopbackName(canonical) &&
-        (isIP(canonical) === 0 || guard.permits(ANY_NAME, canonical, port));
+    const allowed =
+      canonical !== undefined &&
+      !isLoopbackName(canonical) &&
+      (isIP(canonical) === 0 || guard.permits(ANY_NAME, canonical, port));
 
-      if (!allowed) {
-        refuse(host, port, "not a public internet address");
-        explain?.("not a public internet address");
-      }
+    if (!allowed) {
+      refuse(host, port, "not a public internet address");
+      explain?.("not a public internet address");
+    }
 
-      return allowed;
-    },
-    lookupFor,
-    proxyAuthToken,
-  });
+    return allowed;
+  };
 
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  server.unref();
+  const listen = async (token: string | undefined) => {
+    const listening = createHttpProxyServer({
+      filter,
+      lookupFor,
+      proxyAuthToken: token,
+    });
 
-  const address = Value.Parse(ListeningAddress, server.address());
+    listening.listen(0, "127.0.0.1");
+    await once(listening, "listening");
+    listening.unref();
+
+    return {
+      port: Value.Parse(ListeningAddress, listening.address()).port,
+      server: listening,
+    };
+  };
+
+  const { port, server } = await listen(proxyAuthToken);
+
+  // bash's sandbox hands its programs the proxy without a credential. What the proxy guards is the private network,
+  // which every local process could reach directly anyway, so the credential only matters for Obscura's sandbox.
+  const forBash = await listen(undefined);
+
+  const address = { port };
 
   const installed = whichSync("obscura");
 
@@ -184,12 +207,17 @@ export const openPublicWeb = async (dataDir: string): Promise<PublicWeb> => {
   );
 
   return {
+    bashProxyPort: forBash.port,
     close: async () => {
-      const closed = once(server, "close");
+      for (const each of [server, forBash.server]) {
+        const closed = once(each, "close");
 
-      server.close();
-      server.closeAllConnections();
-      await closed;
+        each.close();
+        each.closeAllConnections();
+        // oxlint-disable-next-line no-await-in-loop -- two servers, closed in turn
+        await closed;
+      }
+
       rmSync(scratch, { force: true, recursive: true });
     },
     fetchArgs: (url) => {

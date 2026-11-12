@@ -4,19 +4,18 @@ import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 
+import { text as reply } from "./output.ts";
+import type { ShrokTool } from "./policy.ts";
 import { isInside, isSecret } from "./sandbox.ts";
 
 export type SendFile = (file: string, caption: string) => Promise<void>;
 
-const reply = (value: string) => ({
-  output: [{ text: value, type: "text" as const }],
-});
-
 export const createSendFileTool = (
   workspace: string,
   sender: Promise<SendFile>
-) =>
-  defineTool({
+): ShrokTool => ({
+  phrase: "sending you a file",
+  tool: defineTool({
     description:
       "Send a file from the workspace to the user's phone, such as a PDF, an image, a screenshot or a spreadsheet. Images show as pictures. Use it when the user asks for a file, or when a file says more than text would.",
     execute: async (args) => {
@@ -45,4 +44,5 @@ export const createSendFileTool = (
       ),
       path: Type.String({ description: "The file, relative to the workspace" }),
     }),
-  });
+  }),
+});

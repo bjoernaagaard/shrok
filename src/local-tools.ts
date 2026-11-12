@@ -2,32 +2,25 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { ToolRegistration } from "@earendil-works/pi-durable";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
-
 import type { Approvals } from "./tools/approvals.ts";
 import type { createBrowserTools } from "./tools/browser.ts";
+import type { CallPolicy, ShrokTool } from "./tools/policy.ts";
 
-/** What an optional local tools module contributes: its tools, their progress phrases and their allowed names. */
+/** What an optional local module contributes: its tools, and policies for tools another package registers, such as an MCP tool to allow. */
 export interface LocalTools {
-  readonly tools: readonly ToolRegistration[];
-  readonly phrases?: Readonly<Record<string, string>>;
-  readonly allowed?: readonly string[];
+  readonly tools: readonly ShrokTool[];
+  readonly policies?: readonly CallPolicy[];
 }
 
-/** The local module's shape, declared here so Shrok checks and runs the same without the file. */
-interface LocalModule {
-  readonly createLocalTools: (
-    browser: ReturnType<typeof createBrowserTools>,
-    approvals: Approvals<string, string>
-  ) => LocalTools;
+/** What a local module gets to build its tools on. */
+export interface LocalToolsBase {
+  readonly browser: ReturnType<typeof createBrowserTools>;
+  readonly approvals: Approvals;
 }
 
-const Phrases = Type.Record(Type.String(), Type.String());
-const Names = Type.Array(Type.String());
-
-const isLocalModule = (value: unknown): value is LocalModule =>
+const isLocalModule = (
+  value: unknown
+): value is { createLocalTools: (base: LocalToolsBase) => LocalTools } =>
   typeof value === "object" &&
   value !== null &&
   "createLocalTools" in value &&
@@ -39,8 +32,7 @@ const LOCAL = path.join(import.meta.dirname, "tools", "local.ts");
 
 /** Loads the optional local tools module by path, since public packages and the public repository leave it out. */
 export const loadLocalTools = async (
-  browser: ReturnType<typeof createBrowserTools>,
-  approvals: Approvals
+  base: LocalToolsBase
 ): Promise<LocalTools> => {
   if (!existsSync(LOCAL)) {
     return { tools: [] };
@@ -52,16 +44,10 @@ export const loadLocalTools = async (
     throw new Error(`${LOCAL} does not export createLocalTools.`);
   }
 
-  const local = loaded.createLocalTools(browser, approvals);
+  const local = loaded.createLocalTools(base);
 
-  if (
-    !Array.isArray(local.tools) ||
-    (local.phrases !== undefined && !Value.Check(Phrases, local.phrases)) ||
-    (local.allowed !== undefined && !Value.Check(Names, local.allowed))
-  ) {
-    throw new Error(
-      `${LOCAL} must return tools, and phrases and allowed when it sets them.`
-    );
+  if (!Array.isArray(local.tools)) {
+    throw new TypeError(`${LOCAL}'s createLocalTools must return { tools }.`);
   }
 
   return local;

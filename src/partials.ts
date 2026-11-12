@@ -9,8 +9,6 @@ import type {
   JsonObject,
   SubmissionId,
 } from "@earendil-works/pi-durable";
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 
 export interface Progress {
   readonly text: string;
@@ -23,99 +21,21 @@ export type ShowProgress = (progress: Progress) => void;
 const blockTexts = (message: AssistantMessage): string[] =>
   message.content.map((block) => (block.type === "text" ? block.text : ""));
 
-const MAX_QUERY_CHARS = 40;
-
-const Words = Type.String({ pattern: "\\S" });
-
-const stringArg = (args: JsonObject, key: string): string | undefined => {
-  const value = args[key];
-
-  return Value.Check(Words, value) ? value.trim() : undefined;
-};
-
-const siteOf = (url: string | undefined): string | undefined => {
-  if (url === undefined || !URL.canParse(url)) {
-    return undefined;
-  }
-
-  return new URL(url).hostname.replace(/^www\./u, "");
-};
-
-const quoted = (text: string): string =>
-  text.length > MAX_QUERY_CHARS
-    ? `"${text.slice(0, MAX_QUERY_CHARS)}…"`
-    : `"${text}"`;
-
-const PHRASES = new Map<string, string>([
-  ["bash", "running a command"],
-  ["browser_click", "clicking on the page"],
-  ["browser_read", "reading the page"],
-  ["browser_type", "typing on the page"],
-  ["calendar_add", "adding to your calendar"],
-  ["calendar_events", "reading your calendar"],
-  ["cancel_schedule", "cancelling a schedule"],
-  ["codemode", "running a script"],
-  ["date", "remembering"],
-  ["gmail_draft", "drafting an email"],
-  ["gmail_read", "reading an email"],
-  ["gmail_search", "searching your email"],
-  ["gmail_send", "sending an email"],
-  ["read", "reading a file"],
-  ["save_flow", "saving a flow"],
-  ["save_item", "saving it"],
-  ["schedule", "setting a schedule"],
-  ["schedules", "checking your schedules"],
-  ["search_items", "searching your saved items"],
-  ["send_file", "sending you a file"],
-  ["tool_search", "looking for a tool"],
-  ["transform_text", "writing"],
-  ["write", "writing a file"],
-  ["edit", "editing a file"],
-  ["x_read_post", "reading a post on X"],
-  ["zoom", "remembering"],
-]);
-
-const activityOf = (
-  phrases: ReadonlyMap<string, string>,
-  tool: string,
-  args: JsonObject
-): string => {
-  const query = stringArg(args, "query");
-  const site = siteOf(stringArg(args, "url"));
-  const program = stringArg(args, "program");
-  const flow = stringArg(args, "name");
-
-  if (tool === "web_search" && query !== undefined) {
-    return `searching the web for ${quoted(query)}`;
-  }
-
-  if ((tool === "web_fetch" || tool === "browser_open") && site !== undefined) {
-    return `reading ${site}`;
-  }
-
-  if (tool === "run_program" && program !== undefined) {
-    return program === "xurl" ? "using X" : "using Google";
-  }
-
-  if (tool === "run_flow" && flow !== undefined) {
-    return `running the flow ${flow}`;
-  }
-
-  return phrases.get(tool) ?? `using ${tool.replaceAll("_", " ")}`;
-};
+/** The words the phone shows for a tool call, such as "reading your calendar". */
+export type PhraseOf = (tool: string, args: JsonObject) => string;
 
 export class Partials {
-  readonly #phrases: ReadonlyMap<string, string>;
+  readonly #phraseOf: PhraseOf;
   readonly #listeners = new Map<SubmissionId, ShowProgress>();
-
-  constructor(extraPhrases: Readonly<Record<string, string>> = {}) {
-    this.#phrases = new Map([...PHRASES, ...Object.entries(extraPhrases)]);
-  }
   #running: readonly SubmissionId[] = [];
   #blocks: string[] = [];
   #activity: string | undefined;
   #steps = 0;
   #stream: AgentEventStream | undefined;
+
+  constructor(phraseOf: PhraseOf) {
+    this.#phraseOf = phraseOf;
+  }
 
   async attach(
     harness: Harness,
@@ -159,7 +79,7 @@ export class Partials {
     } else if (event.type === "run_end") {
       this.#running = [];
     } else if (event.type === "tool_execution_start") {
-      this.#activity = activityOf(this.#phrases, event.toolName, event.args);
+      this.#activity = this.#phraseOf(event.toolName, event.args);
       this.#steps += 1;
       this.#show();
     } else if (

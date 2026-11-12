@@ -26,10 +26,12 @@ import { createCodemodeTool } from "@earendil-works/pi-durable/codemode";
 import type { CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
 
 import { isCalibrated } from "./classifier.ts";
-import { integrations } from "./settings.ts";
+import type { Layout } from "./layout.ts";
+import { quoted, textOutcome } from "./tools/approvals.ts";
 import type { Approvals } from "./tools/approvals.ts";
-
-export const FLOWS_FOLDER = "flows";
+import { text } from "./tools/output.ts";
+import type { ShrokTool, ToolCatalog } from "./tools/policy.ts";
+import { registrations, wordsArg } from "./tools/policy.ts";
 
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const LINE_BREAK = /[\n\r\u2028\u2029]/u;
@@ -57,10 +59,6 @@ const fileOf = (dir: string, name: string): string =>
 
 const flowFile = (description: string, input: string, code: string): string =>
   `// ${description}\n// input: ${input}\n${code.trim()}\n`;
-
-const reply = (value: string) => ({
-  output: [{ text: value, type: "text" as const }],
-});
 
 const folderIdentity = (dir: string) => {
   const stat = lstatSync(dir);
@@ -106,7 +104,7 @@ const writeFlow = (
   },
   name: string,
   content: string
-): undefined => {
+): void => {
   const now = folderIdentity(identity.dir);
 
   if (
@@ -139,8 +137,6 @@ const writeFlow = (
   } finally {
     closeSync(fd);
   }
-
-  return undefined;
 };
 
 const listFlows = (dir: string): Flow[] =>
@@ -160,29 +156,18 @@ const listFlows = (dir: string): Flow[] =>
     })
     .toSorted((a, b) => a.name.localeCompare(b.name));
 
-const FLOW_TOOLS = [
-  ...(integrations.google
-    ? [
-        "gmail_search",
-        "gmail_read",
-        "gmail_draft",
-        "calendar_events",
-        "calendar_add",
-      ]
-    : []),
-  "web_fetch",
-  ...(integrations.x ? ["x_read_post"] : []),
-];
-
-const prompt = (classifier: ClassifierModel<ClassifierApi>): string => `# Flows
+const prompt = (
+  classifier: ClassifierModel<ClassifierApi>,
+  flowTools: readonly string[]
+): string => `# Flows
 
 A flow is a saved code mode script for a task the user repeats, such as checking his mail or booking a
 haircut. It does the same steps the same way every time, so prefer run_flow over doing the task by hand
 whenever a flow below fits. Pass its input as a JSON object; the script reads it as \`input\`.
 
 When the user asks for a flow, or a task he repeats has no flow, write one and save it with save_flow, which
-waits for his /yes. A flow script is a code mode script with these rules:
-- Call the supported typed tools (${FLOW_TOOLS.join(", ")}). They return parsed JSON. A flow cannot run another flow or bypass a blocked operation.
+waits for his /yes unless he allowed saving flows for good. A flow script is a code mode script with these rules:
+- Call the supported typed tools (${flowTools.join(", ")}). They return parsed JSON. A flow cannot run another flow or bypass a blocked operation.
   Every child call passes the same capability checks as your own.
 - A flow has no model of its own: for a step that needs judgment or writing, call transform_text, or
   models.classify for a choice, a score or a yes or no. Classify with
@@ -197,38 +182,28 @@ waits for his /yes. A flow script is a code mode script with these rules:
 
 You may try a script once with codemode before you save it, unless it sends, books or pays.`;
 
-export const createFlowsExtension = (
-  workspace: string,
+export const createFlows = (
+  layout: Layout,
   codemode: CodemodeToolOptions,
   approvals: Approvals,
-  classifier: ClassifierModel<ClassifierApi>
+  classifier: ClassifierModel<ClassifierApi>,
+  catalog: ToolCatalog
 ) => {
-  const dir = path.join(workspace, FLOWS_FOLDER);
+  const dir = layout.flows;
   const runner = createCodemodeTool(codemode);
 
   mkdirSync(dir, { recursive: true });
 
-  return defineExtension({
-    name: "flows",
-    sections: [
-      section("flows", () => {
-        const flows = listFlows(dir);
-
-        return `${prompt(classifier)}\n\n${
-          flows.length === 0
-            ? "No flows saved yet."
-            : `Saved flows:\n${flows.map((flow) => `- ${flow.name}: ${flow.description} Input: ${flow.input}`).join("\n")}`
-        }`;
-      }),
-    ],
-    tools: [
-      defineTool({
+  const tools: ShrokTool[] = [
+    {
+      phrase: "saving a flow",
+      tool: defineTool({
         callers: ["model"],
         description:
-          "Save a flow, a code mode script for a task the user repeats. Saving with an existing name replaces it. Waits for his /yes.",
-        execute: async (args, api, context) => {
+          "Save a flow, a code mode script for a task the user repeats. Saving with an existing name replaces it. Waits for his /yes unless he allowed saving flows for good.",
+        execute: async (args, api) => {
           if (!NAME.test(args.name)) {
-            return reply(
+            return text(
               `"${args.name}" is not a flow name: use lowercase letters, digits and hyphens.`
             );
           }
@@ -237,41 +212,36 @@ export const createFlowsExtension = (
             LINE_BREAK.test(args.description) ||
             LINE_BREAK.test(args.input)
           ) {
-            return reply(
+            return text(
               "Write the description and the input on one line each."
             );
           }
 
           if (OPTIONS_LINE.test(args.code)) {
-            return reply("Take out the // @options line and save again.");
+            return text("Take out the // @options line and save again.");
           }
 
           const content = flowFile(args.description, args.input, args.code);
 
-          await approvals.execute(
-            api,
-            () => {
+          return textOutcome(
+            await approvals.request(api, () => {
               const identity = folderIdentity(dir);
-              const expectedState = fileState(fileOf(identity.dir, args.name));
+              const existing = fileState(fileOf(identity.dir, args.name));
 
               return {
-                adapter: "flow-create-v1" as const,
-                arguments: args,
-                expectedState,
-                identity,
-                payload: { content },
-                resource: { file: `${args.name}.js` },
-                summary: `${expectedState.exists ? "replace" : "save"} the flow \`${args.name}\`: ${args.description}`,
-                tool: "save_flow" as const,
-              };
-            },
-            (action) => {
-              writeFlow(action.identity, args.name, action.payload.content);
-            },
-            context.abortSignal
-          );
+                arguments: { ...args },
+                grants: ["saving flows"],
+                run: async () => {
+                  writeFlow(identity, args.name, content);
 
-          return reply(`Saved the flow ${args.name}. Run it with run_flow.`);
+                  return `Saved the flow ${args.name}. Run it with run_flow.`;
+                },
+                state: { existing, identity },
+                summary: `${existing.exists ? "replace" : "save"} the flow \`${args.name}\`: ${quoted(args.description)}`,
+                tool: "save_flow",
+              };
+            })
+          );
         },
         name: "save_flow",
         parameters: Type.Object(
@@ -296,7 +266,15 @@ export const createFlowsExtension = (
         ),
         replay: "unsafe",
       }),
-      defineTool({
+    },
+    {
+      describe: (args) => {
+        const name = wordsArg(args, "name");
+
+        return name === undefined ? undefined : `running the flow ${name}`;
+      },
+      phrase: "running a flow",
+      tool: defineTool({
         callers: ["model"],
         description:
           "Run a saved flow by name. Its tool calls run as the flow says; what it returns is its result.",
@@ -332,6 +310,24 @@ export const createFlowsExtension = (
         }),
         replay: "safe",
       }),
+    },
+  ];
+
+  const extension = defineExtension({
+    name: "flows",
+    sections: [
+      section("flows", () => {
+        const flows = listFlows(dir);
+
+        return `${prompt(classifier, catalog.flowTools())}\n\n${
+          flows.length === 0
+            ? "No flows saved yet."
+            : `Saved flows:\n${flows.map((flow) => `- ${flow.name}: ${flow.description} Input: ${flow.input}`).join("\n")}`
+        }`;
+      }),
     ],
+    tools: registrations(tools),
   });
+
+  return { extension, tools };
 };

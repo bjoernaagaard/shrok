@@ -9,20 +9,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { parseEnv } from "node:util";
 
-/** The secrets in secretspec.toml. Other `_FILE` variables, such as HISTFILE, are not Shrok's to read. */
-const SECRETS = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_BASE_URL",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
-  "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-  "XURL_CLIENT_ID",
-  "XURL_CLIENT_SECRET",
-] as const;
+import { SECRETS } from "./integrations.ts";
 
+const SECRETS_FILE = "secrets.env";
 const TRAILING_NEWLINE = /\r?\n$/u;
+
+/** The mode bits below this value hold the permissions of the group and of others. */
+const GROUP_OR_OTHER_BITS = 0o100;
 const secretSources = new Set<string>();
 const secretIdentities = new Set<string>();
 
@@ -45,7 +40,8 @@ export const isImportedSecret = (target: string): boolean => {
   }
 };
 
-const readSecret = (file: string): string => {
+/** Reads a secret source, which must be a regular file with one link, and remembers it so no tool may open it. */
+const readSecret = (file: string, ownerOnly = false): string => {
   const canonical = realpathSync(file);
   const descriptor = openSync(canonical, "r");
 
@@ -56,60 +52,86 @@ const readSecret = (file: string): string => {
       throw new Error("A secret source must be a regular file with one link.");
     }
 
+    if (
+      ownerOnly &&
+      (info.mode % GROUP_OR_OTHER_BITS !== 0 || info.uid !== process.getuid?.())
+    ) {
+      throw new Error(
+        `${file} must belong to Shrok's user and be readable only by it: chmod 600 ${file}`
+      );
+    }
+
     const value = readFileSync(descriptor, "utf-8");
 
     secretSources.add(path.resolve(file));
     secretSources.add(canonical);
     secretIdentities.add(`${info.dev}:${info.ino}`);
 
-    return value.replace(TRAILING_NEWLINE, "");
+    return value;
   } finally {
     closeSync(descriptor);
   }
 };
 
-/**
- * Reads each secret from a file into NAME: the file NAME_FILE names, as with Docker secrets, or else
- * $CREDENTIALS_DIRECTORY/NAME, where systemd puts the credentials it imports. One trailing newline is dropped.
- * Values are never printed.
- */
-export const loadSecretFiles = (): void => {
+/** NAME from the file NAME_FILE names, as with Docker secrets, or from $CREDENTIALS_DIRECTORY/NAME, as systemd imports them. */
+const loadFileSecrets = (): void => {
+  const credentials = process.env.CREDENTIALS_DIRECTORY;
+
   for (const name of SECRETS) {
     const key = `${name}_FILE`;
     const named = process.env[key];
-    const credentials = process.env.CREDENTIALS_DIRECTORY;
 
-    const imported =
-      credentials === undefined || credentials === ""
-        ? undefined
-        : path.join(credentials, name);
-
-    if (named === undefined || named === "") {
-      if (
-        imported !== undefined &&
-        process.env[name] === undefined &&
-        existsSync(imported)
-      ) {
-        process.env[name] = readSecret(imported);
+    if (named !== undefined && named !== "") {
+      if (process.env[name] !== undefined) {
+        throw new Error(`Both ${name} and ${key} are set. Keep one of them.`);
       }
 
-      continue;
+      try {
+        process.env[name] = readSecret(named).replace(TRAILING_NEWLINE, "");
+      } catch (error) {
+        throw new Error(`${key} names ${named}, which Shrok cannot read.`, {
+          cause: error,
+        });
+      }
+    } else if (credentials !== undefined && credentials !== "") {
+      const imported = path.join(credentials, name);
+
+      if (process.env[name] === undefined && existsSync(imported)) {
+        process.env[name] = readSecret(imported).replace(TRAILING_NEWLINE, "");
+      }
     }
-
-    if (process.env[name] !== undefined) {
-      throw new Error(`Both ${name} and ${key} are set. Keep one of them.`);
-    }
-
-    let value: string;
-
-    try {
-      value = readSecret(named);
-    } catch (error) {
-      throw new Error(`${key} names ${named}, which Shrok cannot read.`, {
-        cause: error,
-      });
-    }
-
-    process.env[name] = value;
   }
+};
+
+/**
+ * Keys and settings from `secrets.env` in the data folder, one NAME=value per line, for whatever the environment
+ * leaves unset. Shrok's own secrets and SHROK_ settings only, so a typo shows at startup.
+ */
+const loadSecretsEnv = (dataDir: string): void => {
+  const file = path.join(dataDir, SECRETS_FILE);
+
+  if (!existsSync(file)) {
+    return;
+  }
+
+  for (const [name, value] of Object.entries(
+    parseEnv(readSecret(file, true))
+  )) {
+    if (
+      name === "SHROK_DATA_DIR" ||
+      !(SECRETS.includes(name) || name.startsWith("SHROK_"))
+    ) {
+      throw new Error(
+        `${file} sets ${name}, which Shrok does not read from it. It takes ${SECRETS.join(", ")} and SHROK_ settings other than SHROK_DATA_DIR.`
+      );
+    }
+
+    process.env[name] ??= value;
+  }
+};
+
+/** Fills the environment from secret files. Values already set win; values are never printed. */
+export const loadSecrets = (dataDir: string): void => {
+  loadFileSecrets();
+  loadSecretsEnv(dataDir);
 };
