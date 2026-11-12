@@ -27,13 +27,16 @@ sequenceDiagram
 
 | What Shrok does | Does it wait for your 👍? |
 | --- | --- |
-| Reads a page you sent, your mail or your calendar | No |
+| Reads a page you sent, your mail, your calendar or your Drive | No |
+| Sets a reminder or a timed task, archives or labels mail, keeps a list | No. It tells you what it set. |
 | Opens a web address that neither you nor a tool gave it | Yes |
-| Adds a calendar event, sets a reminder or saves a flow | Yes, for the exact event, time or script |
+| Adds, changes or deletes a calendar event, or saves a flow | Yes, for the exact event or script |
 | Clicks a button that books, buys, pays, signs up or sends | Yes |
 | Reads a post on X, which costs X credits | Yes |
 | Sends an email | Yes, for the exact email and the Google account it sends from |
 | Runs a `gws` or `xurl` command, such as posting on X | Yes, for the exact command |
+
+A request stays open until you answer it, and Shrok keeps working on other things meanwhile. Answer with `/always` instead of 👍 to allow that kind of action from then on: emails only to the same recipients, commands only exactly the same. `/grants` lists what you allowed, and `/revoke` takes it back.
 
 ## What you need
 
@@ -67,7 +70,7 @@ Shrok reads its settings from the environment.
 | `SHROK_BROWSER` | A Chromium binary to use instead of the bundled one |  |
 | `SHROK_LINKS_FILE` | A text file of links, one per line. Shrok saves each new one and tells you. |  |
 
-Any key can also come from a file. Set `ANTHROPIC_API_KEY_FILE` to the file's path, or use a systemd credential with the same name.
+Settings and keys can also go in `secrets.env` in the data folder, one `NAME=value` per line, readable only by Shrok's user. Shrok uses it for whatever the environment leaves unset, so any secret manager that fills the environment works too, such as `secretspec run`, `op run` or `bas env run`. A key can also come from a file: set `ANTHROPIC_API_KEY_FILE` to the file's path, or use a systemd credential with the same name.
 
 ## Guides
 

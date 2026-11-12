@@ -67,7 +67,7 @@ rm -rf "$out/node/include" "$out/node/share" "$out/node/lib/node_modules/corepac
 node="$out/node/bin/node"
 
 cp -R "$root/src" "$root/skills" "$root/package.json" "$root/pnpm-lock.yaml" "$root/pnpm-workspace.yaml" \
-  "$root/LICENSE" "$root/secretspec.toml" "$out/app/"
+  "$root/LICENSE" "$out/app/"
 rm -rf "$out/app/src/tools/local.ts" "$out/app/skills/local"
 
 # pnpm is installed outside the app: npm refuses to run inside it, as package.json's devEngines names pnpm.

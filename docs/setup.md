@@ -10,13 +10,13 @@ On a Mac:
 brew tap bjoernaagaard/shrok
 brew trust bjoernaagaard/shrok   # Homebrew asks you to trust a tap before it loads its formulas
 brew install shrok
-$(brew --prefix secretspec)/bin/secretspec set -f $(brew --prefix)/var/shrok/app/app/secretspec.toml \
-  --provider keyring:// ANTHROPIC_API_KEY
+mkdir -p ~/Library/Application\ Support/Shrok
+(umask 077; echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/Library/Application\ Support/Shrok/secrets.env)
 brew services start shrok
 shrok pair
 ```
 
-The key goes into your login Keychain. Store it with Homebrew's `secretspec`, as above, because that is the one the service runs. Then macOS lets the service read the key without asking. To use OpenAI instead, store `OPENAI_API_KEY`.
+The key goes into `secrets.env` in Shrok's data folder, which only your user can read. Shrok refuses the file if anyone else can. To use OpenAI instead, set `OPENAI_API_KEY`.
 
 Shrok logs to `$(brew --prefix)/var/log/shrok.log` and keeps its data in `~/Library/Application Support/Shrok`.
 

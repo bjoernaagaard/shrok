@@ -18,7 +18,6 @@ class Shrok < Formula
 
   depends_on :macos
   depends_on "ripgrep"
-  depends_on "secretspec"
 
   # Homebrew rewrites the ID of every dylib in the Cellar, which the bundled browser has no room for, and
   # which would break the signatures of the bundled binaries. So the app stays packed in the Cellar and the
@@ -42,9 +41,10 @@ class Shrok < Formula
 
   def caveats
     <<~EOS
-      Store your model key in the macOS Keychain:
-        #{Formula["secretspec"].opt_bin}/secretspec set -f #{app}/app/secretspec.toml --provider keyring:// ANTHROPIC_API_KEY
-      Use this secretspec, the one the service runs, so macOS lets the service read the key without asking.
+      Put your model key in a file only you can read:
+        mkdir -p ~/Library/Application\ Support/Shrok
+        (umask 077; echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/Library/Application\ Support/Shrok/secrets.env)
+      Add SHROK_TIME_ZONE and other settings there too, one NAME=value per line.
       Then start Shrok and pair your phone:
         brew services start shrok
         shrok pair
@@ -53,11 +53,7 @@ class Shrok < Formula
   end
 
   service do
-    run [
-      Formula["secretspec"].opt_bin/"secretspec", "run",
-      "-f", var/"shrok/app/app/secretspec.toml", "--provider", "keyring://",
-      "--", opt_bin/"shrok", "run"
-    ]
+    run [opt_bin/"shrok", "run"]
     keep_alive successful_exit: false
     # So the service finds gws and xurl when they are installed with Homebrew or npm.
     environment_variables PATH: std_service_path_env

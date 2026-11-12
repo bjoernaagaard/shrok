@@ -7,7 +7,7 @@ Shrok uses the [Google Workspace CLI](https://www.npmjs.com/package/@googleworks
 1. In the [Google Cloud console](https://console.cloud.google.com), create a project, turn on the Gmail and Google Calendar APIs, and create an OAuth client of type **Desktop app**.
 2. Install `gws` where Shrok's service can find it, such as `npm install -g @googleworkspace/cli`.
 3. Give Shrok the client's ID and secret as `GOOGLE_WORKSPACE_CLI_CLIENT_ID` and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET`, the same way you gave it the model key.
-   - Homebrew: `secretspec set` both, as in [setup.md](setup.md#homebrew).
+   - Homebrew: add both to `secrets.env`, as in [setup.md](setup.md#homebrew).
    - Debian or Ubuntu: encrypt both with `systemd-creds`, as in [setup.md](setup.md#debian-and-ubuntu).
 4. Log in as the user Shrok runs as, with the same two values in the environment:
 
