@@ -110,7 +110,7 @@ export class SeenUrls {
 
     const host = href === undefined ? url : new URL(href).host;
 
-    return await this.#approvals.request(call, () => ({
+    return await this.#approvals.request(call, context, () => ({
       arguments: { url },
       grants: [`opening any address on ${host}`],
       run: async (where) => await open(where),

@@ -6,8 +6,8 @@ import type {
   TextContent,
 } from "@earendil-works/pi-ai";
 
+import { neutralize } from "../conversation.ts";
 import { PROMPT } from "../prompt.ts";
-import { markViewCache } from "./cache.ts";
 
 export const LINE_BYTES = 512;
 
@@ -16,12 +16,6 @@ const RULER = "-".repeat(LINE_BYTES);
 const LINE_HEAD = /^\d+\+\d+\|/u;
 
 export const bytes = (text: string): number => Buffer.byteLength(text, "utf-8");
-
-const FRAME_TAG = /<(?=\/?(?:chat|input|sent)\b)/giu;
-
-/** Stored text with its frame tags defused, so a message cannot close <chat> or <input> and pose as another. */
-export const neutralize = (text: string): string =>
-  text.replaceAll(FRAME_TAG, "&lt;");
 
 const toLine = (text: string): string =>
   text
@@ -70,7 +64,6 @@ const attempt = async (
   shortest?: string
 ): Promise<string> => {
   const reply = await models.completeSimple(model, context, {
-    onPayload: markViewCache,
     reasoning: "high",
     signal,
   });

@@ -3,6 +3,10 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import {
+  BACKGROUND_CONTEXT,
+  withAbortSignal,
+} from "@earendil-works/chord/context";
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { JsonObject } from "@earendil-works/pi-durable";
@@ -12,7 +16,6 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 import { report as recordEvent } from "../events.ts";
-import { clockTime } from "../time.ts";
 import { text, typed } from "./output.ts";
 
 export interface ApprovalOwner {
@@ -30,27 +33,44 @@ export interface ApprovalDelivery extends ApprovalMessage {
   readonly deliveredAt: number;
 }
 
+/** A request as the owner sees it. The phone writes it out, with the commands that answer it. */
+export interface ApprovalRequest {
+  readonly id: number;
+  readonly summary: string;
+  /** What /always allows from now on; empty when the request can only be answered once. */
+  readonly grants: readonly string[];
+}
+
+export type RequestState =
+  | "Done"
+  | "Failed"
+  | "declined"
+  | "revoked"
+  | "changed";
+
 export interface ApprovalPhone {
   owner: () => Promise<ApprovalOwner>;
   deliver: (
     owner: ApprovalOwner,
     file: string,
-    caption: string,
+    request: ApprovalRequest,
     signal: AbortSignal,
     sent: (message: ApprovalMessage) => void
   ) => Promise<ApprovalDelivery>;
-  editCaption: (
+  /** Shows on the request's own message how it ended. */
+  showOutcome: (
     owner: ApprovalOwner,
     itemId: number,
-    text: string
+    request: ApprovalRequest,
+    state: RequestState
   ) => Promise<void>;
 }
 
-/** Tells the conversation how a request ended, as a new input the model answers. */
+/** Tells the conversation how a request ended, as an event the model answers. */
 export type ReportOutcome = (text: string, requestId: string) => Promise<void>;
 
-/** Where an action prepares and runs. Not the asking tool's own: that tool has finished by the time the owner answers. */
-export interface RunContext {
+/** Where an action prepares and runs. */
+interface RunContext {
   readonly env: ExecutionEnv;
   readonly context: Context;
 }
@@ -85,17 +105,21 @@ export type Outcome =
 
 export type Verdict = "yes" | "no" | "always";
 
-export type Decision = "decided" | "beforeDelivery" | "unavailable";
+/** `decidedOnce`: an /always on a request with nothing to allow for good, done once like a /yes. */
+export type Decision =
+  | "decided"
+  | "decidedOnce"
+  | "beforeDelivery"
+  | "unavailable";
 
 interface Waiting {
   readonly owner: ApprovalOwner;
-  readonly summary: string;
+  readonly request: ApprovalRequest;
   readonly createdAt: number;
   readonly controller: AbortController;
   readonly prepare: Prepare;
   /** The action as first prepared, without its run function, to compare a fresh preparation with. */
   readonly bound: string;
-  readonly grants: readonly string[];
   message?: ApprovalMessage;
   deliveredAt?: number;
 }
@@ -134,7 +158,6 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS approvals (
   created_at INTEGER,
   asked_at INTEGER,
   answered_at INTEGER,
-  skipped INTEGER NOT NULL DEFAULT 0,
   summary TEXT,
   item_id INTEGER,
   file_id INTEGER,
@@ -143,35 +166,14 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS approvals (
   binding TEXT,
   state TEXT NOT NULL,
   uploaded_at INTEGER,
-  delivered_at INTEGER,
-  expires_at INTEGER
+  delivered_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS approval_retirement (id INTEGER PRIMARY KEY CHECK (id = 1), task INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS grants (id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);`;
 
-const REQUEST_PREFIX = "/'yes ";
-
 /** Text from a page, an email or the model, quoted so it cannot pose as more of the sentence, and cut to fit a caption. */
 export const quoted = (value: string, max = MAX_QUOTED_CHARS): string =>
   `${JSON.stringify(value.slice(0, max))}${value.length > max ? " (cut here; the rest is in the attached details)" : ""}`;
-
-const requestText = (
-  id: number,
-  summary: string,
-  grants: readonly string[]
-): string => {
-  const always = grants.length === 0 ? "" : `   /'always ${id}'`;
-
-  const lasting =
-    grants.length === 0
-      ? ""
-      : `\n\n/always also allows from now on: ${grants.join("; ")}.`;
-
-  return `${REQUEST_PREFIX}${id}'   /'no ${id}'${always}\n\n*Shrok wants to:*\n${summary}${lasting}\n\nFull details are attached. The request stays open until you answer.`;
-};
-
-export const isApprovalRequestText = (value: string | undefined): boolean =>
-  value?.startsWith(REQUEST_PREFIX) === true;
 
 const Text = Type.String();
 
@@ -189,12 +191,12 @@ const resultText = (result: JsonValue): string => {
 export const Asked = Type.Object({
   askedOwner: Type.Integer({
     description:
-      "The open request's number. Its outcome arrives later, as a message starting [Request N].",
+      "The open request's number. Its outcome arrives later, as an event starting [Request N].",
   }),
 });
 
 const askedText = (id: number): string =>
-  `Asked the owner to approve request ${id}. Nothing has happened yet. When he answers, a message starting [Request ${id}] tells you how it went.`;
+  `Asked the owner to approve request ${id}. Nothing has happened yet. When he answers, an event starting [Request ${id}] tells you how it went.`;
 
 /** A typed tool result: the action's own output when it ran, else the open request. Declare `Type.Union([schema, Asked])`. */
 export const typedOutcome = <T extends TSchema>(schema: T, outcome: Outcome) =>
@@ -211,6 +213,17 @@ export const typedOutcome = <T extends TSchema>(schema: T, outcome: Outcome) =>
 export const textOutcome = (outcome: Outcome) =>
   text(outcome.ran ? resultText(outcome.result) : askedText(outcome.id));
 
+/** How approvals work, for the system prompt. */
+export const APPROVALS_PROMPT = `# Approvals
+
+Some actions need the owner's consent: they ask him on his phone and return at once, saying the request is open.
+Nothing has happened then; don't wait for it or ask again. He answers whenever he likes, and you then get an event
+starting [Request N] that says how it went, with the action's result. Act on it: finish the task, or tell him why
+not. With /always he allows that kind of action for good, and it then runs without asking.
+
+Unsupported external effects are blocked, not judged by a model. MCP operations have no reviewed capability. Do not
+try another tool or ask for a generic approval to bypass a block. Ask the owner to do that step himself.`;
+
 /**
  * The owner's consent to actions outside his machine. A request waits, open, until he answers on his phone; the
  * asking tool returns at once. On yes the action is prepared again, run if nothing changed, and its outcome reported
@@ -219,14 +232,17 @@ export const textOutcome = (outcome: Outcome) =>
 export class Approvals {
   readonly #db: DatabaseSync;
   readonly #details: string;
-  readonly #where: RunContext;
+  readonly #env: ExecutionEnv;
   readonly #waiting = new Map<number, Waiting>();
+  /** Approved actions running now, so /stop can abort them. */
+  readonly #running = new Set<AbortController>();
+  readonly #captions = new Set<Promise<void>>();
   readonly #phone = Promise.withResolvers<ApprovalPhone>();
   readonly #report = Promise.withResolvers<ReportOutcome>();
 
-  constructor(file: string, where: RunContext) {
+  constructor(file: string, env: ExecutionEnv) {
     mkdirSync(path.dirname(file), { recursive: true });
-    this.#where = where;
+    this.#env = env;
     this.#details = path.join(path.dirname(file), "approval-details");
     mkdirSync(this.#details, { mode: 0o700, recursive: true });
     this.#db = new DatabaseSync(file);
@@ -252,12 +268,20 @@ export class Approvals {
     this.#report.resolve(report);
   }
 
-  /** Runs the action now when standing permissions cover it, else asks the owner and returns the open request. */
-  async request(call: Call, prepare: Prepare): Promise<Outcome> {
+  /**
+   * Runs the action now when standing permissions cover it, else asks the owner and returns the open request.
+   * `context` is the asking tool's: it bounds the preparation, and an action a standing permission covers.
+   */
+  async request(
+    call: Call,
+    context: Context,
+    prepare: Prepare
+  ): Promise<Outcome> {
     this.#prune();
     const phone = await this.#phone.promise;
     const owner = await phone.owner();
-    const action = await prepare(this.#where);
+    const where = { context, env: this.#env };
+    const action = await prepare(where);
     const boundAction = Approvals.#boundOf(action);
     const bound = JSON.stringify(boundAction);
 
@@ -327,7 +351,7 @@ export class Approvals {
 
     if (granted) {
       try {
-        const result = await action.run(this.#where);
+        const result = await action.run(where);
 
         this.#setState(id, "completed");
 
@@ -344,14 +368,13 @@ export class Approvals {
       bound,
       controller: new AbortController(),
       createdAt,
-      grants: action.grants,
       owner,
       prepare,
-      summary: action.summary,
+      request: { grants: action.grants, id, summary: action.summary },
     };
 
     this.#waiting.set(id, waiting);
-    void this.#deliver(id, waiting, bindingObject, phone);
+    void this.#deliver(waiting, bindingObject, phone);
 
     return { id, ran: false };
   }
@@ -379,7 +402,7 @@ export class Approvals {
       }
 
       void this.#tell(
-        `[Request ${id} declined] ${waiting.summary}`,
+        `[Request ${id} declined] ${waiting.request.summary}`,
         `approval:${id}:declined`
       );
 
@@ -411,7 +434,7 @@ export class Approvals {
     }
 
     if (verdict === "always") {
-      for (const key of waiting.grants) {
+      for (const key of waiting.request.grants) {
         this.#db
           .prepare(
             "INSERT OR IGNORE INTO grants (key, created_at) VALUES (?, ?)"
@@ -420,9 +443,11 @@ export class Approvals {
       }
     }
 
-    void this.#carryOut(id, waiting);
+    void this.#carryOut(waiting);
 
-    return "decided";
+    return verdict === "always" && waiting.request.grants.length === 0
+      ? "decidedOnce"
+      : "decided";
   }
 
   /** The requests waiting for this owner's answer. */
@@ -461,11 +486,26 @@ export class Approvals {
     );
   }
 
-  close(): void {
+  /** Aborts the approved actions running now; false when none was. */
+  stop(): boolean {
+    const any = this.#running.size > 0;
+
+    for (const controller of this.#running) {
+      controller.abort();
+    }
+
+    return any;
+  }
+
+  /** Revokes the open requests and shows it on their messages, so no stale /yes stays on the phone. */
+  async close(): Promise<void> {
+    this.stop();
+
     for (const id of this.#waiting.keys()) {
       this.#close(id, "revoked");
     }
 
+    await Promise.allSettled(this.#captions);
     this.#prune();
     this.#db.close();
   }
@@ -524,11 +564,12 @@ export class Approvals {
   }
 
   async #deliver(
-    id: number,
     waiting: Waiting,
     binding: JsonObject,
     phone: ApprovalPhone
   ): Promise<void> {
+    const { id } = waiting.request;
+
     const file = path.join(this.#details, `approval-${id}-${randomUUID()}.txt`);
 
     try {
@@ -541,7 +582,7 @@ export class Approvals {
       const delivery = await phone.deliver(
         waiting.owner,
         file,
-        requestText(id, waiting.summary, waiting.grants),
+        waiting.request,
         waiting.controller.signal,
         (message) => {
           waiting.controller.signal.throwIfAborted();
@@ -555,11 +596,11 @@ export class Approvals {
       );
 
       waiting.controller.signal.throwIfAborted();
-      this.#delivered(id, waiting, delivery);
+      this.#delivered(waiting, delivery);
     } catch (error) {
       if (this.#close(id, "revoked")) {
         void this.#tell(
-          `[Request ${id} never reached his phone] ${waiting.summary}\n\nError: ${String(error)}`,
+          `[Request ${id} never reached his phone] ${waiting.request.summary}\n\nError: ${String(error)}`,
           `approval:${id}:undelivered`
         );
       }
@@ -568,7 +609,9 @@ export class Approvals {
     }
   }
 
-  #delivered(id: number, waiting: Waiting, delivery: ApprovalDelivery): void {
+  #delivered(waiting: Waiting, delivery: ApprovalDelivery): void {
+    const { id } = waiting.request;
+
     if (
       waiting.message?.itemId !== delivery.itemId ||
       waiting.message.fileId !== delivery.fileId
@@ -610,54 +653,67 @@ export class Approvals {
   }
 
   /** Prepares the approved action again and runs it only if nothing the owner saw has changed. */
-  async #carryOut(id: number, waiting: Waiting): Promise<void> {
-    let action: Action;
+  async #carryOut(waiting: Waiting): Promise<void> {
+    const { id, summary } = waiting.request;
+    const controller = new AbortController();
+
+    const where = {
+      context: withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
+      env: this.#env,
+    };
+
+    this.#running.add(controller);
 
     try {
-      action = await waiting.prepare(this.#where);
+      let action: Action;
 
-      if (JSON.stringify(Approvals.#boundOf(action)) !== waiting.bound) {
-        throw new Error("what it would do changed after he was asked");
+      try {
+        action = await waiting.prepare(where);
+
+        if (JSON.stringify(Approvals.#boundOf(action)) !== waiting.bound) {
+          throw new Error("what it would do changed after he was asked");
+        }
+      } catch (error) {
+        this.#close(id, "changed");
+        await this.#tell(
+          `[Request ${id} approved, but not done] ${summary}\n\nIt was not done because ${String(error)}. Ask again if it is still wanted.`,
+          `approval:${id}:changed`
+        );
+
+        return;
       }
-    } catch (error) {
-      this.#close(id, "changed");
-      await this.#tell(
-        `[Request ${id} approved, but not done] ${waiting.summary}\n\nIt was not done because ${String(error)}. Ask again if it is still wanted.`,
-        `approval:${id}:changed`
-      );
 
-      return;
-    }
+      const claimed = this.#db
+        .prepare(
+          "UPDATE approvals SET state = 'executing' WHERE id = ? AND state = 'approved'"
+        )
+        .run(id);
 
-    const claimed = this.#db
-      .prepare(
-        "UPDATE approvals SET state = 'executing' WHERE id = ? AND state = 'approved'"
-      )
-      .run(id);
+      this.#waiting.delete(id);
 
-    this.#waiting.delete(id);
+      if (claimed.changes !== 1) {
+        return;
+      }
 
-    if (claimed.changes !== 1) {
-      return;
-    }
+      try {
+        const result = await action.run(where);
 
-    try {
-      const result = await action.run(this.#where);
-
-      this.#setState(id, "completed");
-      void this.#show(waiting, id, "Done");
-      await this.#tell(
-        `[Request ${id} approved and done] ${waiting.summary}\n\nResult:\n${resultText(result)}`,
-        `approval:${id}:done`
-      );
-    } catch (error) {
-      this.#setState(id, "outcome_unknown");
-      void this.#show(waiting, id, "Failed");
-      await this.#tell(
-        `[Request ${id} approved, but it failed] ${waiting.summary}\n\nError: ${String(error)}\n\nCheck what actually happened before trying again.`,
-        `approval:${id}:failed`
-      );
+        this.#setState(id, "completed");
+        this.#show(waiting, "Done");
+        await this.#tell(
+          `[Request ${id} approved and done] ${summary}\n\nResult:\n${resultText(result)}`,
+          `approval:${id}:done`
+        );
+      } catch (error) {
+        this.#setState(id, "outcome_unknown");
+        this.#show(waiting, "Failed");
+        await this.#tell(
+          `[Request ${id} approved, but it failed] ${summary}\n\nError: ${String(error)}\n\nCheck what actually happened before trying again.`,
+          `approval:${id}:failed`
+        );
+      }
     } finally {
+      this.#running.delete(controller);
       this.#prune();
     }
   }
@@ -696,7 +752,7 @@ export class Approvals {
       return false;
     }
 
-    void this.#show(waiting, id, state);
+    this.#show(waiting, state);
 
     return true;
   }
@@ -751,23 +807,35 @@ export class Approvals {
     }
   }
 
-  async #show(waiting: Waiting, id: number, state: string): Promise<void> {
-    if (waiting.message === undefined) {
+  /** Updates the request's message in the background; close waits for these. */
+  #show(waiting: Waiting, state: RequestState): void {
+    const { message } = waiting;
+
+    if (message === undefined) {
       return;
     }
 
-    try {
-      const phone = await this.#phone.promise;
-      await phone.editCaption(
-        waiting.owner,
-        waiting.message.itemId,
-        `*Request ${id}: ${state} at ${clockTime.format(new Date())}*\n\n${waiting.summary}\n\nFull details remain attached.`
-      );
-    } catch (error) {
-      recordEvent(
-        "approvals",
-        `Could not update approval ${id}: ${String(error)}`
-      );
-    }
+    const shown = (async () => {
+      try {
+        const phone = await this.#phone.promise;
+
+        await phone.showOutcome(
+          waiting.owner,
+          message.itemId,
+          waiting.request,
+          state
+        );
+      } catch (error) {
+        recordEvent(
+          "approvals",
+          `Could not update approval ${waiting.request.id}: ${String(error)}`
+        );
+      }
+    })();
+
+    this.#captions.add(shown);
+    void shown.finally(() => {
+      this.#captions.delete(shown);
+    });
   }
 }

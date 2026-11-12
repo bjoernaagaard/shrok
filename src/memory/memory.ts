@@ -7,6 +7,7 @@ import type {
   TextContent,
 } from "@earendil-works/pi-ai";
 
+import { neutralize } from "../conversation.ts";
 import { report } from "../events.ts";
 import { chatBlocks } from "./cache.ts";
 import {
@@ -15,7 +16,6 @@ import {
   compressTask,
   LINE_BYTES,
   mergeTask,
-  neutralize,
 } from "./compactor.ts";
 import { toLogMessages } from "./log.ts";
 import type { MemoryStore } from "./store.ts";

@@ -11,6 +11,7 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createBashTool } from "@earendil-works/pi-durable/tools";
 
+import { managedNames } from "../layout.ts";
 import type { Layout } from "../layout.ts";
 import { importedSecretPaths, isImportedSecret } from "../secrets.ts";
 import type { ShrokTool } from "./policy.ts";
@@ -305,14 +306,26 @@ class BoundedBashEnv extends NodeExecutionEnv {
   }
 }
 
-export const createSandboxedBash = (workspace: string) => {
+export const createSandboxedBash = (layout: Layout) => {
+  const { workspace } = layout;
+
+  // The system's temp folder is outside what the sandbox lets commands write, so mktemp and friends use this one.
+  const temporary = path.join(workspace, "tmp");
+
+  mkdirSync(temporary, { recursive: true });
+
   const env = new BoundedBashEnv({ cwd: workspace });
 
   const tool = createBashTool({
     prepare: async (execution) => {
       execution.cwd = workspace;
       // Programs look for their settings in HOME, which the sandbox denies, so point it at the workspace.
-      execution.env = { ...safeEnv(), HOME: workspace, PATH: sandboxPath() };
+      execution.env = {
+        ...safeEnv(),
+        HOME: workspace,
+        PATH: sandboxPath(),
+        TMPDIR: temporary,
+      };
       execution.inheritEnv = false;
       const wrapped = await SandboxManager.wrapWithSandbox(execution.command);
 
@@ -325,22 +338,10 @@ export const createSandboxedBash = (workspace: string) => {
     phrase: "running a command",
     tool: {
       ...tool,
-      description:
-        "Run a bash command in the workspace. It can write there, except in the items, flows, lists and skills folders, and reach public web addresses, but not the rest of the home folder or the private network. Commands have a mandatory deadline and total output byte budget. Output is never spilled to disk.",
+      description: `Run a bash command in the workspace. It can write there, except in the ${managedNames(layout)} folders, and reach public web addresses, but not the rest of the home folder or the private network. Commands have a mandatory deadline and total output byte budget. Output is never spilled to disk.`,
       execute: async (
         ...[args, api, context]: Parameters<typeof tool.execute>
-      ) =>
-        await tool.execute(
-          {
-            ...args,
-            timeout: Math.min(
-              args.timeout ?? MAX_BASH_SECONDS,
-              MAX_BASH_SECONDS
-            ),
-          },
-          { ...api, env },
-          context
-        ),
+      ) => await tool.execute(args, { ...api, env }, context),
     },
   } satisfies ShrokTool;
 };

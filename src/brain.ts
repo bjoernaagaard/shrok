@@ -11,6 +11,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 
 import { createCodemode } from "./codemode.ts";
 import { ask } from "./conversation.ts";
+import type { From } from "./conversation.ts";
 import { createFlows } from "./flows.ts";
 import { Items } from "./items.ts";
 import type { Layout } from "./layout.ts";
@@ -68,6 +69,8 @@ export interface Brain {
     sentAt: Date,
     show?: ShowProgress
   ) => Promise<string>;
+  /** Tells the conversation that something happened, as an event rather than the owner's words, and returns the answer. */
+  report: (text: string, requestId: string, at: Date) => Promise<string>;
   settled: (requestId: string) => Promise<Settled>;
   /** Stops the work in progress; false when nothing was running. Schedules keep their times. */
   stop: () => Promise<boolean>;
@@ -120,11 +123,11 @@ export const openBrain = async (
 
   const tools = createTools({
     approvals,
-    browserTools: [...browser.tools, ...local.tools],
     fileSender: fileSender.promise,
     items,
     layout,
     mcpTools: mcp.tools,
+    moreTools: [...browser.tools, ...local.tools],
     publicWeb,
     seenUrls,
     smallModel,
@@ -147,7 +150,7 @@ export const openBrain = async (
     ...(local.policies ?? []),
   ]);
 
-  const guard = createGuard(catalog, tools.problem);
+  const guard = createGuard(catalog);
   const registry = createRegistry();
 
   for (const extension of [
@@ -188,7 +191,12 @@ export const openBrain = async (
       env: () => new NodeExecutionEnv({ cwd: layout.workspace }),
       models,
       registry,
-      settings: { compaction: { enabled: false }, retry: RETRY },
+      // A failed run must not hold up the messages queued behind it until the owner writes again.
+      settings: {
+        afterFailedRun: "continue",
+        compaction: { enabled: false },
+        retry: RETRY,
+      },
     },
     context
   );
@@ -202,14 +210,10 @@ export const openBrain = async (
   await partials.attach(harness, root.id, context);
   harness.resume();
 
-  const answer = async (
-    text: string,
-    requestId: string,
-    sentAt: Date,
+  const submit = async (
+    message: { text: string; requestId: string; at: Date; from: From },
     show?: ShowProgress
   ): Promise<string> => {
-    seenUrls.note(text);
-
     let listened: Parameters<Partials["forget"]>[0] | undefined;
 
     const answered = await ask(
@@ -225,14 +229,7 @@ export const openBrain = async (
         submit: async (draft, submitContext) =>
           await root.submit(draft, submitContext),
       },
-      {
-        requestId,
-        sentAt,
-        text: expandSkillCommand(
-          text,
-          loadSkills([layout.skills, BUNDLED_SKILLS]).skills
-        ),
-      },
+      message,
       context,
       (submission) => {
         if (show !== undefined) {
@@ -247,6 +244,29 @@ export const openBrain = async (
     });
 
     return answered.answered ? answered.text : unansweredText(answered.reason);
+  };
+
+  const answer = async (
+    text: string,
+    requestId: string,
+    sentAt: Date,
+    show?: ShowProgress
+  ): Promise<string> => {
+    // Only the owner's own words make addresses safe to open.
+    seenUrls.note(text);
+
+    return await submit(
+      {
+        at: sentAt,
+        from: "owner",
+        requestId,
+        text: expandSkillCommand(
+          text,
+          loadSkills([layout.skills, BUNDLED_SKILLS]).skills
+        ),
+      },
+      show
+    );
   };
 
   return {
@@ -266,6 +286,8 @@ export const openBrain = async (
       await stopSandbox();
       items.close();
     },
+    report: async (text, requestId, at) =>
+      await submit({ at, from: "event", requestId, text }),
     settled: async (requestId) => {
       const submission = await storage.submissionByRequest(
         root.id,
@@ -280,10 +302,11 @@ export const openBrain = async (
     },
     stop: async () => {
       const busy = partials.busy();
+      const acting = approvals.stop();
 
       await root.abort(context);
 
-      return busy;
+      return busy || acting;
     },
   };
 };

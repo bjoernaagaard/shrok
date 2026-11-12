@@ -4,11 +4,39 @@ import { T } from "@simplex-chat/types";
 import type { ChatEvent } from "@simplex-chat/types";
 import type { api } from "simplex-chat";
 
+import { clockTime } from "./time.ts";
 import type {
   ApprovalDelivery,
-  ApprovalOwner,
   ApprovalMessage,
+  ApprovalOwner,
+  ApprovalRequest,
+  RequestState,
 } from "./tools/approvals.ts";
+
+const REQUEST_PREFIX = "/'yes ";
+
+/** A request's message: the commands that answer it, tappable in SimpleX, then what it would do. */
+const requestText = ({ grants, id, summary }: ApprovalRequest): string => {
+  const always = grants.length === 0 ? "" : `   /'always ${id}'`;
+
+  const lasting =
+    grants.length === 0
+      ? ""
+      : `\n\n/always also allows from now on: ${grants.join("; ")}.`;
+
+  return `${REQUEST_PREFIX}${id}'   /'no ${id}'${always}\n\n*Shrok wants to:*\n${summary}${lasting}\n\nFull details are attached. The request stays open until you answer.`;
+};
+
+/** The request's message once it ended. */
+export const outcomeText = (
+  { id, summary }: ApprovalRequest,
+  state: RequestState
+): string =>
+  `*Request ${id}: ${state} at ${clockTime.format(new Date())}*\n\n${summary}\n\nFull details remain attached.`;
+
+/** Whether a message is a request, by the commands it starts with. */
+export const isApprovalRequestText = (value: string | undefined): boolean =>
+  value?.startsWith(REQUEST_PREFIX) === true;
 
 interface Observed extends ApprovalMessage {
   uploadedAt?: number;
@@ -38,7 +66,7 @@ export const deliverApproval = async (
   chat: api.ChatApi,
   owner: ApprovalOwner,
   file: string,
-  caption: string,
+  request: ApprovalRequest,
   signal: AbortSignal,
   sent: (message: ApprovalMessage) => void
 ): Promise<ApprovalDelivery> => {
@@ -186,7 +214,7 @@ export const deliverApproval = async (
         {
           fileSource: { filePath: file },
           mentions: {},
-          msgContent: { text: caption, type: "file" },
+          msgContent: { text: requestText(request), type: "file" },
         },
       ]
     );

@@ -45,8 +45,6 @@ const WhenSchema = Type.Object({
       minimum: 2,
     })
   ),
-  /** The week every_weeks counts from: set when the schedule is made. */
-  from: Type.Optional(Type.String()),
   month_days: Type.Optional(
     Type.Array(Type.Integer({ maximum: 31, minimum: 1 }), {
       description:
@@ -55,7 +53,8 @@ const WhenSchema = Type.Object({
   ),
 });
 
-type When = Static<typeof WhenSchema>;
+/** A schedule's times, with the week every_weeks counts from, which Shrok sets when the schedule is made. */
+type When = Static<typeof WhenSchema> & { readonly from?: string };
 
 interface ScheduleInput {
   readonly what: string;
@@ -159,23 +158,22 @@ const nextRun = (when: When, after: number): number | undefined => {
     return due > after ? due : undefined;
   }
 
-  const start = Temporal.Instant.fromEpochMilliseconds(after)
+  const plainTime = Temporal.PlainTime.from(time);
+
+  const first = Temporal.Instant.fromEpochMilliseconds(after)
     .toZonedDateTimeISO(timeZone)
-    .with({
-      ...time,
-      microsecond: 0,
-      millisecond: 0,
-      nanosecond: 0,
-      second: 0,
-    });
+    .toPlainDate();
 
-  const end = start.add({ months: MAX_MONTHS_AHEAD });
+  const last = first.add({ months: MAX_MONTHS_AHEAD });
 
+  // Each day's time is built in the zone on its own, so a summer-time gap moves only the day it falls on.
   for (
-    let candidate = start;
-    Temporal.ZonedDateTime.compare(candidate, end) < 0;
-    candidate = candidate.add({ days: 1 })
+    let day = first;
+    Temporal.PlainDate.compare(day, last) < 0;
+    day = day.add({ days: 1 })
   ) {
+    const candidate = day.toZonedDateTime({ plainTime, timeZone });
+
     if (candidate.epochMilliseconds > after && repeatsOn(when, candidate)) {
       return candidate.epochMilliseconds;
     }
@@ -196,19 +194,14 @@ const WEEKDAYS = [
 
 const list = new Intl.ListFormat(locale, { type: "conjunction" });
 
-const dayFormat = new Intl.DateTimeFormat(locale, {
-  day: "numeric",
-  month: "long",
-  timeZone,
-  weekday: "long",
-});
-
 /** How the owner reads when a schedule fires, such as "every other Tuesday at 08:00". */
 const describeWhen = (when: When): string => {
   if (when.date !== undefined) {
-    const day = dayFormat.format(
-      new Date(`${Temporal.PlainDate.from(when.date).toString()}T12:00:00Z`)
-    );
+    const day = Temporal.PlainDate.from(when.date).toLocaleString(locale, {
+      day: "numeric",
+      month: "long",
+      weekday: "long",
+    });
 
     return `on ${day} at ${when.at}`;
   }
@@ -322,8 +315,9 @@ export const createSchedules = () => {
               await conversation.submit(draft, submitContext),
           },
           {
+            at: due,
+            from: "event",
             requestId: `schedule:${task.id}:${due}`,
-            sentAt: due,
             text: `[Scheduled] ${task.input.what}`,
           },
           context

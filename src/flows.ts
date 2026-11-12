@@ -201,7 +201,7 @@ export const createFlows = (
         callers: ["model"],
         description:
           "Save a flow, a code mode script for a task the user repeats. Saving with an existing name replaces it. Waits for his /yes unless he allowed saving flows for good.",
-        execute: async (args, api) => {
+        execute: async (args, api, context) => {
           if (!NAME.test(args.name)) {
             return text(
               `"${args.name}" is not a flow name: use lowercase letters, digits and hyphens.`
@@ -224,7 +224,7 @@ export const createFlows = (
           const content = flowFile(args.description, args.input, args.code);
 
           return textOutcome(
-            await approvals.request(api, () => {
+            await approvals.request(api, context, () => {
               const identity = folderIdentity(dir);
               const existing = fileState(fileOf(identity.dir, args.name));
 

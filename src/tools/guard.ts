@@ -20,13 +20,6 @@ import type { ShrokTool, ToolCatalog } from "./policy.ts";
 const BLOCKED =
   "This operation has no reviewed capability and is blocked. A model judgment or generic approval cannot authorize it. The owner must complete it manually. Do not try another tool to bypass this restriction.";
 
-/** Why a call may not open the file at `path`, or undefined. Checked before a call and again in its executor. */
-export type PathProblem = (
-  tool: string,
-  path: string | undefined,
-  context: Context
-) => Promise<string | undefined>;
-
 interface Spent extends JsonObject {
   input: SubmissionId;
   calls: Record<string, number>;
@@ -45,7 +38,6 @@ const PaidDoc = defineDoc<{ run?: Spent }>({
 
 const Fields = Type.Record(Type.String(), Type.Unknown());
 const Text = Type.String();
-const PathArgs = Type.Object({ path: Type.String() });
 
 /** Debits a paid call before it runs, including every interrupted attempt that may pay again. */
 const spend = async (
@@ -90,15 +82,9 @@ const spend = async (
  * checks too, not only the hook: a replay-safe tool can resume in its execute phase after a restart, without the
  * hook or the harness's argument validation running again.
  */
-export const createGuard = (catalog: ToolCatalog, problem: PathProblem) => {
-  const check = async (
-    name: string,
-    path: string | undefined,
-    context: Context
-  ): Promise<string | undefined> =>
-    catalog.get(name) === undefined
-      ? BLOCKED
-      : await problem(name, path, context);
+export const createGuard = (catalog: ToolCatalog) => {
+  const blocked = (name: string): string | undefined =>
+    catalog.get(name) === undefined ? BLOCKED : undefined;
 
   const guard = (tools: readonly ToolRegistration[]): ToolRegistration[] =>
     tools.map((tool) => ({
@@ -106,14 +92,10 @@ export const createGuard = (catalog: ToolCatalog, problem: PathProblem) => {
       description:
         catalog.get(tool.name) === undefined ? BLOCKED : tool.description,
       execute: async (args, api, context) => {
-        const blocked = await check(
-          tool.name,
-          Value.Check(PathArgs, args) ? args.path : undefined,
-          context
-        );
+        const block = blocked(tool.name);
 
-        if (blocked !== undefined) {
-          throw new Error(blocked);
+        if (block !== undefined) {
+          throw new Error(block);
         }
 
         if (!Value.Check(tool.parameters, args)) {
@@ -143,14 +125,8 @@ export const createGuard = (catalog: ToolCatalog, problem: PathProblem) => {
   const extension = defineExtension({
     hooks: [
       hook(ToolTask, {
-        beforeTool: async (call, _api, context) => {
-          const block = await check(
-            call.name,
-            Value.Check(PathArgs, call.arguments)
-              ? call.arguments.path
-              : undefined,
-            context
-          );
+        beforeTool: async (call) => {
+          const block = blocked(call.name);
 
           return block === undefined ? {} : { block };
         },

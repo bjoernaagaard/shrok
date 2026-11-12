@@ -267,10 +267,13 @@ const webSearch = async (
   };
 };
 
-const withSources = ({ sources, text }: WebSearchResult): string =>
-  sources.length === 0 || text.includes("http")
+const withSources = ({ sources, text }: WebSearchResult): string => {
+  const missing = sources.filter(({ url }) => !text.includes(url));
+
+  return missing.length === 0
     ? text
-    : `${text}\n\nSources:\n${sources.map(({ title, url }, index) => `${index + 1}. ${title === "" ? url : title}: ${url}`).join("\n")}`;
+    : `${text}\n\nSources:\n${missing.map(({ title, url }, index) => `${index + 1}. ${title === "" ? url : title}: ${url}`).join("\n")}`;
+};
 
 const fetchPage = async (
   env: ExecutionEnv | undefined,

@@ -9,6 +9,8 @@ import type {
   SubmissionId,
 } from "@earendil-works/pi-durable";
 
+import { report } from "./events.ts";
+
 export interface Progress {
   readonly text: string;
   readonly activity: string | undefined;
@@ -117,7 +119,11 @@ export class Partials {
     };
 
     for (const input of this.#running) {
-      this.#listeners.get(input)?.(progress);
+      try {
+        this.#listeners.get(input)?.(progress);
+      } catch (error) {
+        report("phone", `Could not show progress: ${String(error)}`);
+      }
     }
   }
 

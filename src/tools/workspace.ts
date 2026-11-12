@@ -131,6 +131,13 @@ const rejectLinkedFile = (target: string): void => {
   }
 };
 
+/** Writes a file into the workspace, with the same checks and budget as the write tool. */
+export type WriteFile = (
+  file: string,
+  content: string | Uint8Array,
+  context: Context
+) => Promise<void>;
+
 /**
  * read, write and edit, confined to the workspace. Writes are serialized, quota-checked, and replace rather than
  * mutate an inode; the managed folders change only through their own tools.
@@ -290,11 +297,12 @@ export const createWorkspaceFiles = (layout: Layout) => {
         throw new Error(blocked);
       }
 
+      // read too, so its own link and size checks apply.
       return WRITING_TOOLS.has(tool.name)
         ? await serialized(
             async () => await tool.execute(args, { ...api, env }, context)
           )
-        : await tool.execute(args, api, context);
+        : await tool.execute(args, { ...api, env }, context);
     },
   });
 
@@ -304,5 +312,11 @@ export const createWorkspaceFiles = (layout: Layout) => {
     { phrase: "editing a file", tool: confined(createEditTool()) },
   ];
 
-  return { problem, tools };
+  const writeFile: WriteFile = async (file, content, context) => {
+    await serialized(async () => {
+      getOrThrow(await env.writeFile(file, content, context));
+    });
+  };
+
+  return { tools, writeFile };
 };

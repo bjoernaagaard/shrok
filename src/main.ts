@@ -3,17 +3,17 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
 import { openBrain } from "./brain.ts";
 import { checkControlSocket, serveControl } from "./control.ts";
-import { dataDir, setting } from "./data-dir.ts";
+import { dataDir } from "./data-dir.ts";
 import { closeEvents, openEvents, record } from "./events.ts";
 import { layoutOf } from "./layout.ts";
 import { watchLinks } from "./links.ts";
 import { lockDataDir } from "./lock.ts";
 import { openPhone } from "./phone.ts";
+import { setting } from "./settings.ts";
 import { Approvals } from "./tools/approvals.ts";
 
 const OWNER_ONLY_UMASK = 0o077;
@@ -56,10 +56,10 @@ process.on("uncaughtExceptionMonitor", (error, origin) => {
 
 const layout = layoutOf(dataDir);
 
-const approvals = new Approvals(path.join(dataDir, "approvals.sqlite"), {
-  context: BACKGROUND_CONTEXT,
-  env: new NodeExecutionEnv({ cwd: layout.workspace }),
-});
+const approvals = new Approvals(
+  path.join(dataDir, "approvals.sqlite"),
+  new NodeExecutionEnv({ cwd: layout.workspace })
+);
 
 const brain = await openBrain(layout, approvals);
 
@@ -73,11 +73,11 @@ const notify = async (text: string, unlessSentSince: Date): Promise<void> => {
   await phone.send(text, unlessSentSince);
 };
 
-// The outcome of an answered request goes to the conversation, and the model's reply to the owner.
+// The outcome of an answered request goes to the conversation as an event, and the model's reply to the owner.
 approvals.attach(phone.approvalPhone, async (outcome, requestId) => {
   const at = new Date();
 
-  await notify(await brain.answer(outcome, requestId, at), at);
+  await notify(await brain.report(outcome, requestId, at), at);
 });
 
 brain.attach({ notify, sendFile: phone.sendFile });
@@ -104,6 +104,11 @@ shuttingDown = "the pairing socket";
 
 await stopControl();
 
+shuttingDown = "the open approval requests";
+
+// Before SimpleX closes, so each open request's message says it was revoked.
+await approvals.close();
+
 shuttingDown = "SimpleX";
 
 await phone.close();
@@ -111,8 +116,6 @@ await phone.close();
 shuttingDown = "the brain, browser and sandbox";
 
 await brain.close();
-
-approvals.close();
 
 closeEvents();
 

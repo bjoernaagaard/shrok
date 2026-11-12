@@ -1,6 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 
-import { SENT_FRAME } from "../conversation.ts";
+import { FRAME } from "../conversation.ts";
 import type { NewLogMessage } from "./store.ts";
 
 const TOOL_OUTPUT_CHARS = 30_000;
@@ -53,11 +53,11 @@ export const toLogMessages = (
   };
 
   if (message.role === "user") {
-    add(
-      "user",
-      userText(message.content).replace(SENT_FRAME, ""),
-      message.timestamp
-    );
+    const text = userText(message.content);
+    // An event, such as a request's outcome, is logged as one: its text is not the owner's words.
+    const kind = FRAME.exec(text)?.groups?.tag === "event" ? "event" : "user";
+
+    add(kind, text.replace(FRAME, ""), message.timestamp);
   } else if (message.role === "assistant") {
     const text = message.content
       .flatMap((block) => (block.type === "text" ? [block.text] : []))

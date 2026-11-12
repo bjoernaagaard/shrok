@@ -14,6 +14,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { withAnthropicClassifier } from "./classifier.ts";
+import { MODEL_PROVIDERS } from "./integrations.ts";
 import { setting } from "./settings.ts";
 
 interface Defaults {
@@ -83,10 +84,9 @@ const prepare =
   };
 
 // The official Anthropic and OpenAI SDKs read these; pi-ai leaves them to its caller.
-const BASE_URL_SETTINGS = new Map([
-  ["anthropic", "ANTHROPIC_BASE_URL"],
-  ["openai", "OPENAI_BASE_URL"],
-]);
+const BASE_URL_SETTINGS = new Map<string, string>(
+  MODEL_PROVIDERS.map(({ baseUrl, provider }) => [provider, baseUrl])
+);
 
 const withBaseUrl = (provider: Provider): Provider => {
   const name = BASE_URL_SETTINGS.get(provider.id);

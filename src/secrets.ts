@@ -16,6 +16,13 @@ import { SECRETS } from "./integrations.ts";
 const SECRETS_FILE = "secrets.env";
 const TRAILING_NEWLINE = /\r?\n$/u;
 
+/** An empty variable counts as unset, as for every other setting. */
+const isSet = (name: string): boolean => {
+  const value = process.env[name];
+
+  return value !== undefined && value !== "";
+};
+
 /** The mode bits below this value hold the permissions of the group and of others. */
 const GROUP_OR_OTHER_BITS = 0o100;
 const secretSources = new Set<string>();
@@ -82,7 +89,7 @@ const loadFileSecrets = (): void => {
     const named = process.env[key];
 
     if (named !== undefined && named !== "") {
-      if (process.env[name] !== undefined) {
+      if (isSet(name)) {
         throw new Error(`Both ${name} and ${key} are set. Keep one of them.`);
       }
 
@@ -96,7 +103,7 @@ const loadFileSecrets = (): void => {
     } else if (credentials !== undefined && credentials !== "") {
       const imported = path.join(credentials, name);
 
-      if (process.env[name] === undefined && existsSync(imported)) {
+      if (!isSet(name) && existsSync(imported)) {
         process.env[name] = readSecret(imported).replace(TRAILING_NEWLINE, "");
       }
     }
@@ -126,7 +133,9 @@ const loadSecretsEnv = (dataDir: string): void => {
       );
     }
 
-    process.env[name] ??= value;
+    if (!isSet(name)) {
+      process.env[name] = value;
+    }
   }
 };
 

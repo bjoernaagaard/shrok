@@ -43,11 +43,13 @@ const PostOutput = Type.Object({
 export const createXTools = (approvals: Approvals): ShrokTool[] => [
   {
     flow: true,
+    // Each read costs X credits, so one request may read only a few, even with a standing permission.
+    paid: { calls: 10 },
     phrase: "reading a post on X",
     tool: defineTool({
       description:
         "Read one post on X: its author, date and full text. Give the x.com or twitter.com link or the post's id. Each read costs the user money and, unless he allowed reads for good, waits for his /yes for that exact post, so search the saved items first.",
-      execute: async (args, api) => {
+      execute: async (args, api, toolContext) => {
         const match = POST_ID.exec(args.post.trim())?.groups;
         const id = match?.bare ?? match?.linked;
 
@@ -59,7 +61,7 @@ export const createXTools = (approvals: Approvals): ShrokTool[] => [
 
         return typedOutcome(
           PostOutput,
-          await approvals.request(api, () => ({
+          await approvals.request(api, toolContext, () => ({
             arguments: { post: id },
             grants: ["paid X API reads of posts"],
             run: async ({ context, env }) => {

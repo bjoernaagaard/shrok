@@ -81,6 +81,21 @@ export const watchLinks = (
           `Shrok could not save ${url} on try ${attempt} of ${MAX_TRIES}.`
         );
 
+        if (attempt === MAX_TRIES) {
+          try {
+            // oxlint-disable-next-line no-await-in-loop
+            await notify(
+              `${LABEL}\n\nI couldn't save ${url} after ${MAX_TRIES} tries. Send it to me again if you still want it.`,
+              at
+            );
+          } catch (error) {
+            report(
+              "links",
+              `Shrok could not say it gave up on ${url}: ${String(error)}`
+            );
+          }
+        }
+
         continue;
       }
 

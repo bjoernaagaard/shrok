@@ -5,12 +5,15 @@ import path from "node:path";
 import { CC, T } from "@simplex-chat/types";
 import { api, bot, core, util } from "simplex-chat";
 
-import { deliverApproval } from "./approval-delivery.ts";
+import {
+  deliverApproval,
+  isApprovalRequestText,
+  outcomeText,
+} from "./approval-delivery.ts";
 import { report } from "./events.ts";
 import type { Layout } from "./layout.ts";
 import type { Progress } from "./partials.ts";
 import { shareMessage } from "./shares.ts";
-import { isApprovalRequestText } from "./tools/approvals.ts";
 import type {
   ApprovalPhone,
   Approvals,
@@ -74,7 +77,9 @@ const DECLINE = "👎";
 const REQUEST_UNAVAILABLE =
   "That approval request is invalid or no longer waiting. Use the numbered command on the current request.";
 
-const UNDECIDED: Readonly<Record<Exclude<Decision, "decided">, string>> = {
+const UNDECIDED: Readonly<
+  Record<Exclude<Decision, "decided" | "decidedOnce">, string>
+> = {
   beforeDelivery:
     "That request is still arriving on your phone with its details. Send your answer again in a few seconds.",
   unavailable: REQUEST_UNAVAILABLE,
@@ -637,6 +642,16 @@ export const openPhone = async (
       return;
     }
 
+    if (decision === "decidedOnce") {
+      await say(
+        contactId,
+        itemId,
+        "Done once. This kind of action always asks, so there was nothing to allow for good."
+      );
+
+      return;
+    }
+
     if (params !== "") {
       await say(contactId, itemId, UNDECIDED[decision]);
 
@@ -965,7 +980,7 @@ export const openPhone = async (
       receivedAt
     );
 
-    if (decision !== "decided") {
+    if (decision !== "decided" && decision !== "decidedOnce") {
       await say(
         approvalOwner.contactId,
         chatReaction.chatItem.meta.itemId,
@@ -1113,7 +1128,7 @@ export const openPhone = async (
 
   return {
     approvalPhone: {
-      deliver: async (recipient, file, caption, signal, sent) => {
+      deliver: async (recipient, file, request, signal, sent) => {
         if (
           recipient.userId !== user.userId ||
           recipient.contactId !== (await ownerId())
@@ -1125,12 +1140,13 @@ export const openPhone = async (
           chat,
           recipient,
           file,
-          caption,
+          request,
           signal,
           sent
         );
       },
-      editCaption: async (recipient, itemId, text) => {
+      owner: async () => ({ contactId: await ownerId(), userId: user.userId }),
+      showOutcome: async (recipient, itemId, request, state) => {
         if (
           recipient.userId !== user.userId ||
           recipient.contactId !== (await ownerId())
@@ -1144,11 +1160,10 @@ export const openPhone = async (
           T.ChatType.Direct,
           recipient.contactId,
           itemId,
-          { text, type: "file" },
+          { text: outcomeText(request, state), type: "file" },
           false
         );
       },
-      owner: async () => ({ contactId: await ownerId(), userId: user.userId }),
     },
     close: async () => {
       closing = true;

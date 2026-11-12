@@ -4,12 +4,26 @@ import type { EntryId, Submission } from "@earendil-works/pi-durable";
 
 import { localTime } from "./time.ts";
 
-/** The local time a message was sent, put above it so the model reads times as the owner does. */
-const sentFrame = (sentAt: Date | number): string =>
-  `<sent>${localTime.format(sentAt)}</sent>\n\n`;
+/**
+ * Who a message is from: the owner, or an event, such as a schedule firing or a request's outcome. Only the owner's
+ * words are orders. An event's text can hold what a page or an email said, so it must never pass for his.
+ */
+export type From = "owner" | "event";
 
-/** Matches the frame `framed` puts above a message, for the memory log, which keeps the message without it. */
-export const SENT_FRAME = /^<sent>[^<]*<\/sent>\s*/u;
+const TAGS: Readonly<Record<From, string>> = { event: "event", owner: "sent" };
+
+/** The local time above a message, in a tag that says who it is from, so the model reads times as the owner does. */
+const frame = (from: From, at: Date | number): string =>
+  `<${TAGS[from]}>${localTime.format(at)}</${TAGS[from]}>\n\n`;
+
+/** Matches the frame above a message, for the memory log, which keeps the message without it and logs who it is from. */
+export const FRAME = /^<(?<tag>sent|event)>[^<]*<\/(?:sent|event)>\s*/u;
+
+const FRAME_TAG = /<(?=\/?(?:chat|input|sent|event)\b)/giu;
+
+/** Text with the frame tags defused, so a quoted page or message cannot close a frame and pose as another. */
+export const neutralize = (text: string): string =>
+  text.replaceAll(FRAME_TAG, "&lt;");
 
 /** The text of every assistant message in an answer entry's model messages. */
 const answerText = (model: readonly { role: string }[] | undefined): string =>
@@ -45,7 +59,8 @@ export const ask = async (
   conversation: Asking,
   message: {
     readonly text: string;
-    readonly sentAt: Date | number;
+    readonly at: Date | number;
+    readonly from: From;
     readonly requestId: string;
   },
   context: Context,
@@ -53,7 +68,7 @@ export const ask = async (
 ): Promise<Answer> => {
   const submission = await conversation.submit(
     {
-      content: `${sentFrame(message.sentAt)}${message.text}`,
+      content: `${frame(message.from, message.at)}${neutralize(message.text)}`,
       requestId: message.requestId,
       type: "input",
     },

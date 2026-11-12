@@ -11,7 +11,7 @@ export interface ShrokTool {
   readonly describe?: (args: JsonObject) => string | undefined;
   /** For tools that cost money per call: how many calls, and how many characters of text arguments, one owner request may spend. */
   readonly paid?: { readonly calls: number; readonly chars?: number };
-  /** Whether a flow script may call it, and so whether the flows prompt lists it. */
+  /** Whether the flows prompt lists it as a tool flow scripts should call. Every call still passes the guard. */
   readonly flow?: boolean;
 }
 

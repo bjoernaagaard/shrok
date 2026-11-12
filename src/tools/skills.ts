@@ -6,6 +6,7 @@ import type { Static } from "typebox";
 import { Value } from "typebox/value";
 import { parse } from "yaml";
 
+import { report } from "../events.ts";
 import { INTEGRATIONS } from "../integrations.ts";
 import type { Integration } from "../integrations.ts";
 import { integrations } from "../settings.ts";
@@ -248,6 +249,9 @@ const usable = (dir: string, skill: Skill): boolean => {
   );
 };
 
+/** Problems already reported: skills are loaded on every message, and each problem is worth one event. */
+const reported = new Set<string>();
+
 export const loadSkills = (dirs: readonly string[]): LoadSkillsResult => {
   const result: LoadSkillsResult = { diagnostics: [], skills: [] };
   const names = new Set<string>();
@@ -267,6 +271,15 @@ export const loadSkills = (dirs: readonly string[]): LoadSkillsResult => {
         names.add(skill.name);
         result.skills.push(skill);
       }
+    }
+  }
+
+  for (const { message, path: file } of result.diagnostics) {
+    const problem = `${file}: ${message}`;
+
+    if (!reported.has(problem)) {
+      reported.add(problem);
+      report("skills", `Shrok skipped a skill. ${problem}`);
     }
   }
 

@@ -22,6 +22,13 @@ type Share =
 
 const KILOBYTE = 1024;
 
+/** What the model does with a share, for the system prompt. */
+export const SHARES_PROMPT = `# Shares
+
+A message that starts with [Shared link], [Shared file] or [Shared image] is something the user shared from his
+phone. Save it with save_item, following the saving-shares skill, then answer in one short line. Saved items are
+in the workspace's items folder; search them with search_items.`;
+
 const message = (text: string): string[] =>
   text.trim() === "" ? [] : [`Message: ${text.trim()}`];
 

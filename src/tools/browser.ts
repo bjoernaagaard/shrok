@@ -777,7 +777,7 @@ export const createBrowserTools = (
       tool: defineTool({
         description:
           "Click an element on the page open in the browser, by its ref from the latest snapshot. Use it for buttons, links, checkboxes and radios. A button that submits a form, or a control that books, buys, pays, orders, subscribes, signs up, confirms or sends, waits for the owner's /yes unless he allowed it on that site for good.",
-        execute: async (args, api) => {
+        execute: async (args, api, context) => {
           const page = await session.page();
           const element = await find(page, args.ref);
 
@@ -794,8 +794,10 @@ export const createBrowserTools = (
           }
 
           return textOutcome(
-            await approvals.request(api, async () => {
-              const target = await find(page, args.ref);
+            await approvals.request(api, context, async () => {
+              // The page the session has now: it closes after ten idle minutes, and the owner may answer later.
+              const current = await session.page();
+              const target = await find(current, args.ref);
 
               const button =
                 target === undefined ? null : await commitButton(target);
@@ -806,7 +808,7 @@ export const createBrowserTools = (
                 );
               }
 
-              const url = page.url();
+              const url = current.url();
               const { host } = new URL(url);
 
               const site =
@@ -820,7 +822,8 @@ export const createBrowserTools = (
                   `pressing buttons that book, buy, pay, sign up or send on ${site}`,
                 ],
                 run: async () => {
-                  const approved = await find(page, args.ref);
+                  const now = await session.page();
+                  const approved = await find(now, args.ref);
 
                   if (approved === undefined) {
                     throw new Error("The approved button is gone.");
@@ -828,12 +831,12 @@ export const createBrowserTools = (
 
                   await clickElement(approved);
 
-                  return await settledText(page);
+                  return await settledText(now);
                 },
                 state: {
                   around: button.around,
                   button: button.label,
-                  title: await page.title(),
+                  title: await current.title(),
                   url,
                 },
                 summary: `press ${quoted(button.label)} on ${site}: ${quoted(args.element)}\n\nThe page around it says: ${quoted(button.around)}`,
@@ -850,8 +853,8 @@ export const createBrowserTools = (
       phrase: "typing on the page",
       tool: defineTool({
         description:
-          "Type into a text field on the page open in the browser, replacing what it holds. This never presses Enter or submits a form; use browser_click for buttons, checkboxes and radios. Typing on a site waits for the owner's /yes the first time, unless he allowed typing there for good.",
-        execute: async (args, api) => {
+          "Type into a text field on the page open in the browser, replacing what it holds. This never presses Enter or submits a form; use browser_click for buttons, checkboxes and radios. Typing waits for the owner's /yes, unless he allowed typing on that site for good.",
+        execute: async (args, api, context) => {
           const page = await session.page();
           const field = await find(page, args.ref);
 
@@ -859,37 +862,47 @@ export const createBrowserTools = (
             return await gone(page, args.ref);
           }
 
-          const { host } = new URL(page.url());
-
           // A page can send what is typed into it to its site at once, so the site needs the owner's consent.
           return textOutcome(
-            await approvals.request(api, () => ({
-              arguments: { host, ref: args.ref, text: args.text },
-              grants: [`typing into pages on ${host}`],
-              run: async () => {
-                const target = await find(page, args.ref);
+            await approvals.request(api, context, async () => {
+              const current = await session.page();
+              const target = await find(current, args.ref);
 
-                if (target === undefined) {
-                  throw new Error("The field is gone: the page changed.");
-                }
+              if (target === undefined) {
+                throw new Error("the field is gone: the page changed");
+              }
 
-                try {
-                  await target.fill(args.text);
-                } catch (error) {
-                  const reason =
-                    error instanceof Error
-                      ? error.message.split("\n")[0]
-                      : String(error);
+              const { host } = new URL(current.url());
 
-                  return `That did not work: ${reason}. Use browser_click for checkboxes, radios and buttons.\n\n${await snapshot(page)}`;
-                }
+              return {
+                arguments: { ...args },
+                grants: [`typing into pages on ${host}`],
+                run: async () => {
+                  const now = await session.page();
+                  const approvedField = await find(now, args.ref);
 
-                return await settledText(page);
-              },
-              state: {},
-              summary: `type ${quoted(args.text)} into ${quoted(args.element)} on ${host}`,
-              tool: "browser_type",
-            }))
+                  if (approvedField === undefined) {
+                    throw new Error("The field is gone: the page changed.");
+                  }
+
+                  try {
+                    await approvedField.fill(args.text);
+                  } catch (error) {
+                    const reason =
+                      error instanceof Error
+                        ? error.message.split("\n")[0]
+                        : String(error);
+
+                    return `That did not work: ${reason}. Use browser_click for checkboxes, radios and buttons.\n\n${await snapshot(now)}`;
+                  }
+
+                  return await settledText(now);
+                },
+                state: { host, url: current.url() },
+                summary: `type ${quoted(args.text)} into ${quoted(args.element)} on ${host}`,
+                tool: "browser_type",
+              };
+            })
           );
         },
         name: "browser_type",

@@ -55,8 +55,7 @@ interface Output {
 const runProgram = async (
   argv: readonly [Program, ...string[]],
   env: ExecutionEnv | undefined,
-  context: Context,
-  onOutput?: (text: string) => void
+  context: Context
 ): Promise<{ exitCode: number; output: Output }> => {
   if (env === undefined) {
     throw new Error(`${argv[0]} needs an execution environment.`);
@@ -80,7 +79,6 @@ const runProgram = async (
         }
 
         output[stream] += text;
-        onOutput?.(text);
       },
       timeout: TIMEOUT_SECONDS,
     },
@@ -139,15 +137,17 @@ export const createProgramsTools = (approvals: Approvals): ShrokTool[] =>
     ? []
     : [
         {
-          describe: (args) => (args.program === "xurl" ? "using X" : undefined),
-          phrase: "using Google",
+          describe: (args) =>
+            INTEGRATIONS.find(({ program }) => program === args.program)
+              ?.phrase,
+          phrase: "using a program with your login",
           tool: defineTool({
             description: `Run a program that uses the user's own login, outside the bash sandbox, with arguments only (no shell). Each run waits for the owner's /yes on the exact command, unless he allowed that exact command for good, so prefer a typed tool when one fits. Programs:\n${PROGRAMS.map((program) => `- ${program}: ${integrationOf(program)?.description ?? ""}`).join("\n")}`,
-            execute: async (args, api) => {
+            execute: async (args, api, toolContext) => {
               const argv: [Program, ...string[]] = [args.program, ...args.args];
 
               return textOutcome(
-                await approvals.request(api, () => ({
+                await approvals.request(api, toolContext, () => ({
                   arguments: { args: args.args, program: args.program },
                   grants: [`running exactly ${JSON.stringify(argv)}`],
                   run: async ({ context, env }) => {

@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import type { Context } from "@earendil-works/chord/context";
@@ -15,6 +16,7 @@ import type { Approvals } from "./approvals.ts";
 import { typed } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
 import { programJson } from "./programs.ts";
+import type { WriteFile } from "./workspace.ts";
 
 const DEFAULT_MAX = 10;
 const MAX_SEARCH_RESULTS = 50;
@@ -191,6 +193,9 @@ const DriveReadOutput = Type.Object({
 
 const EmptyResponse = Type.Object({});
 
+/** Labels that delete or hide mail, which gmail_modify refuses, as it runs without the owner's /yes. */
+const DESTRUCTIVE_LABELS = new Set(["SPAM", "TRASH"]);
+
 /** Google's own formats, exported as text the model can read, and anything else downloaded as it is. */
 const EXPORTS = new Map([
   ["application/vnd.google-apps.document", "text/plain"],
@@ -320,152 +325,162 @@ const eventText = (event: {
 
 export const createGoogleTools = (
   approvals: Approvals,
-  layout: Layout
-): ShrokTool[] => {
-  const driveDir = path.join(layout.workspace, "drive");
+  layout: Layout,
+  writeFile: WriteFile
+): ShrokTool[] => [
+  {
+    flow: true,
+    phrase: "searching your email",
+    tool: defineTool({
+      description:
+        "Find emails with a Gmail search, newest first. Read one with gmail_read.",
+      execute: async (args, api, context) => {
+        const found = await programJson(
+          "gws",
+          TriageResponse,
+          api.env,
+          [
+            "gmail",
+            "+triage",
+            flag("query", args.query),
+            "--max",
+            String(Math.min(args.max ?? DEFAULT_MAX, MAX_SEARCH_RESULTS)),
+            "--format",
+            "json",
+          ],
+          context
+        );
 
-  return [
-    {
-      flow: true,
-      phrase: "searching your email",
-      tool: defineTool({
-        description:
-          "Find emails with a Gmail search, newest first. Read one with gmail_read.",
-        execute: async (args, api, context) => {
-          const found = await programJson(
-            "gws",
-            TriageResponse,
-            api.env,
-            [
-              "gmail",
-              "+triage",
-              flag("query", args.query),
-              "--max",
-              String(Math.min(args.max ?? DEFAULT_MAX, MAX_SEARCH_RESULTS)),
-              "--format",
-              "json",
-            ],
-            context
-          );
-
-          return typed(SearchOutput, { messages: found.messages ?? [] });
-        },
-        name: "gmail_search",
-        parameters: Type.Object({
-          max: Type.Optional(
-            Type.Integer({ maximum: MAX_SEARCH_RESULTS, minimum: 1 })
-          ),
-          query: Type.String({
-            description:
-              "Gmail search, such as is:unread, from:anna, newer_than:7d, subject:invoice",
-          }),
+        return typed(SearchOutput, { messages: found.messages ?? [] });
+      },
+      name: "gmail_search",
+      parameters: Type.Object({
+        max: Type.Optional(
+          Type.Integer({ maximum: MAX_SEARCH_RESULTS, minimum: 1 })
+        ),
+        query: Type.String({
+          description:
+            "Gmail search, such as is:unread, from:anna, newer_than:7d, subject:invoice",
         }),
-        replay: "safe",
-        structuredOutputSchema: SearchOutput,
       }),
-    },
-    {
-      flow: true,
-      phrase: "reading an email",
-      tool: defineTool({
-        description:
-          "Read one email: its sender, recipients, subject and text.",
-        execute: async (args, api, context) =>
-          typed(MessageOutput, await readMessage(api.env, args.id, context)),
-        name: "gmail_read",
-        parameters: Type.Object({ id: Type.String() }),
-        replay: "safe",
-        structuredOutputSchema: MessageOutput,
-      }),
-    },
-    {
-      flow: true,
-      phrase: "tidying your email",
-      tool: defineTool({
-        description:
-          "Archive an email, mark it read or unread, or add and remove labels. Label ids come from Gmail, such as STARRED, IMPORTANT or a user label's id.",
-        execute: async (args, api, context) => {
-          const add = [
-            ...(args.labels_to_add ?? []),
-            ...(args.action === "mark_unread" ? ["UNREAD"] : []),
-          ];
+      replay: "safe",
+      structuredOutputSchema: SearchOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "reading an email",
+    tool: defineTool({
+      description: "Read one email: its sender, recipients, subject and text.",
+      execute: async (args, api, context) =>
+        typed(MessageOutput, await readMessage(api.env, args.id, context)),
+      name: "gmail_read",
+      parameters: Type.Object({ id: Type.String() }),
+      replay: "safe",
+      structuredOutputSchema: MessageOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "tidying your email",
+    tool: defineTool({
+      description:
+        "Archive an email, mark it read or unread, or add and remove labels. Label ids come from Gmail, such as STARRED, IMPORTANT or a user label's id.",
+      execute: async (args, api, context) => {
+        const refused = (args.labels_to_add ?? []).filter((label) =>
+          DESTRUCTIVE_LABELS.has(label.toUpperCase())
+        );
 
-          const remove = [
-            ...(args.labels_to_remove ?? []),
-            ...(args.action === "archive" ? ["INBOX"] : []),
-            ...(args.action === "mark_read" ? ["UNREAD"] : []),
-          ];
-
-          const changed = await programJson(
-            "gws",
-            ModifyResponse,
-            api.env,
-            [
-              "gmail",
-              "users",
-              "messages",
-              "modify",
-              ...params({ id: args.id, userId: "me" }),
-              "--json",
-              JSON.stringify({ addLabelIds: add, removeLabelIds: remove }),
-            ],
-            context
+        if (refused.length > 0) {
+          throw new Error(
+            `gmail_modify does not move mail to ${refused.join(" or ")}. Ask the owner to do it in Gmail.`
           );
+        }
 
-          return typed(ModifyOutput, {
-            labels: changed.labelIds ?? [],
-            messageId: changed.id,
-          });
-        },
-        name: "gmail_modify",
-        parameters: Type.Object({
-          action: Type.Optional(
-            Type.Enum(["archive", "mark_read", "mark_unread"])
-          ),
-          id: Type.String({ description: "The message id" }),
-          labels_to_add: Type.Optional(Type.Array(Type.String())),
-          labels_to_remove: Type.Optional(Type.Array(Type.String())),
-        }),
-        replay: "safe",
-        structuredOutputSchema: ModifyOutput,
-      }),
-    },
-    {
-      flow: true,
-      phrase: "drafting an email",
-      tool: defineTool({
-        description:
-          "Save an email or a reply as a Gmail draft. Nothing is sent. The owner can edit and send it from Gmail.",
-        execute: async (args, api, context) => {
-          const draft = await programJson(
-            "gws",
-            DraftResponse,
-            api.env,
-            composeArgs(args, true),
-            context
-          );
+        const add = [
+          ...(args.labels_to_add ?? []),
+          ...(args.action === "mark_unread" ? ["UNREAD"] : []),
+        ];
 
-          return typed(DraftOutput, {
-            draftId: draft.id,
-            messageId: draft.message.id,
-            threadId: draft.message.threadId,
-          });
-        },
-        name: "gmail_draft",
-        parameters: ComposeParameters,
-        structuredOutputSchema: DraftOutput,
+        const remove = [
+          ...(args.labels_to_remove ?? []),
+          ...(args.action === "archive" ? ["INBOX"] : []),
+          ...(args.action === "mark_read" ? ["UNREAD"] : []),
+        ];
+
+        const changed = await programJson(
+          "gws",
+          ModifyResponse,
+          api.env,
+          [
+            "gmail",
+            "users",
+            "messages",
+            "modify",
+            ...params({ id: args.id, userId: "me" }),
+            "--json",
+            JSON.stringify({ addLabelIds: add, removeLabelIds: remove }),
+          ],
+          context
+        );
+
+        return typed(ModifyOutput, {
+          labels: changed.labelIds ?? [],
+          messageId: changed.id,
+        });
+      },
+      name: "gmail_modify",
+      parameters: Type.Object({
+        action: Type.Optional(
+          Type.Enum(["archive", "mark_read", "mark_unread"])
+        ),
+        id: Type.String({ description: "The message id" }),
+        labels_to_add: Type.Optional(Type.Array(Type.String())),
+        labels_to_remove: Type.Optional(Type.Array(Type.String())),
       }),
-    },
-    {
-      flow: true,
-      phrase: "sending an email",
-      tool: defineTool({
-        description:
-          "Send an email or a reply. Only when the user asked to send. Unless he allowed these recipients for good, it waits for his /yes on the exact email and the account it sends from.",
-        execute: async (args, api) =>
-          typedOutcome(
-            SentOutput,
-            await approvals.request(api, async ({ context, env }) => {
+      replay: "safe",
+      structuredOutputSchema: ModifyOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "drafting an email",
+    tool: defineTool({
+      description:
+        "Save an email or a reply as a Gmail draft. Nothing is sent. The owner can edit and send it from Gmail.",
+      execute: async (args, api, context) => {
+        const draft = await programJson(
+          "gws",
+          DraftResponse,
+          api.env,
+          composeArgs(args, true),
+          context
+        );
+
+        return typed(DraftOutput, {
+          draftId: draft.id,
+          messageId: draft.message.id,
+          threadId: draft.message.threadId,
+        });
+      },
+      name: "gmail_draft",
+      parameters: ComposeParameters,
+      structuredOutputSchema: DraftOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "sending an email",
+    tool: defineTool({
+      description:
+        "Send an email or a reply. Only when the user asked to send. Unless he allowed these recipients for good, it waits for his /yes on the exact email and the account it sends from.",
+      execute: async (args, api, toolContext) =>
+        typedOutcome(
+          SentOutput,
+          await approvals.request(
+            api,
+            toolContext,
+            async ({ context, env }) => {
               // Read again at /yes: a different login or a changed thread fails the comparison, so the email
               // that goes out is the one the owner approved.
               const { emailAddress: account } = await programJson(
@@ -522,122 +537,122 @@ export const createGoogleTools = (
                 summary: `send ${what} from ${account} to ${quoted(to)}, saying ${quoted(args.body)}`,
                 tool: "gmail_send",
               };
-            })
-          ),
-        name: "gmail_send",
-        parameters: ComposeParameters,
-        structuredOutputSchema: Type.Union([SentOutput, Asked]),
-      }),
-    },
-    {
-      flow: true,
-      phrase: "reading your calendar",
-      tool: defineTool({
-        description: `The user's calendar events from today through the next days, on ${timeZone} time, with their ids for calendar_update and calendar_delete.`,
-        execute: async (args, api, context) => {
-          const today = Temporal.Now.zonedDateTimeISO(timeZone).startOfDay();
+            }
+          )
+        ),
+      name: "gmail_send",
+      parameters: ComposeParameters,
+      structuredOutputSchema: Type.Union([SentOutput, Asked]),
+    }),
+  },
+  {
+    flow: true,
+    phrase: "reading your calendar",
+    tool: defineTool({
+      description: `The user's calendar events from today through the next days, on ${timeZone} time, with their ids for calendar_update and calendar_delete.`,
+      execute: async (args, api, context) => {
+        const today = Temporal.Now.zonedDateTimeISO(timeZone).startOfDay();
 
-          const found = await programJson(
-            "gws",
-            EventsResponse,
-            api.env,
-            [
-              "calendar",
-              "events",
-              "list",
-              ...params({
-                calendarId: "primary",
-                maxResults: 250,
-                orderBy: "startTime",
-                singleEvents: true,
-                timeMax: today.add({ days: args.days }).toInstant().toString(),
-                timeMin: today.toInstant().toString(),
-                timeZone,
-              }),
-            ],
-            context
-          );
+        const found = await programJson(
+          "gws",
+          EventsResponse,
+          api.env,
+          [
+            "calendar",
+            "events",
+            "list",
+            ...params({
+              calendarId: "primary",
+              maxResults: 250,
+              orderBy: "startTime",
+              singleEvents: true,
+              timeMax: today.add({ days: args.days }).toInstant().toString(),
+              timeMin: today.toInstant().toString(),
+              timeZone,
+            }),
+          ],
+          context
+        );
 
-          return typed(EventsOutput, {
-            events: (found.items ?? []).map(eventOf),
-          });
-        },
-        name: "calendar_events",
-        parameters: Type.Object({
-          days: Type.Integer({ maximum: 90, minimum: 1 }),
-        }),
-        replay: "safe",
-        structuredOutputSchema: EventsOutput,
+        return typed(EventsOutput, {
+          events: (found.items ?? []).map(eventOf),
+        });
+      },
+      name: "calendar_events",
+      parameters: Type.Object({
+        days: Type.Integer({ maximum: 90, minimum: 1 }),
       }),
-    },
-    {
-      flow: true,
-      phrase: "adding to your calendar",
-      tool: defineTool({
-        description:
-          "Add an event to the user's own calendar, with no guests. Unless he allowed this for good, it waits for his /yes on the exact event. Add guests afterwards with calendar_update.",
-        execute: async (args, api) =>
-          typedOutcome(
-            Event,
-            await approvals.request(api, () => ({
-              arguments: { ...args },
-              grants: ["adding events without guests to your calendar"],
-              run: async ({ context, env }) =>
-                eventOf(
-                  await programJson(
-                    "gws",
-                    EventResponse,
-                    env,
-                    [
-                      "calendar",
-                      "events",
-                      "insert",
-                      ...params({ calendarId: "primary" }),
-                      "--json",
-                      JSON.stringify({
-                        description: args.description,
-                        end: { dateTime: args.end, timeZone },
-                        location: args.location,
-                        start: { dateTime: args.start, timeZone },
-                        summary: args.summary,
-                      }),
-                    ],
-                    context
-                  )
-                ),
-              state: {},
-              summary: `add an event to your calendar, ${eventText(args)}, with no guests`,
-              tool: "calendar_add",
-            }))
-          ),
-        name: "calendar_add",
-        parameters: Type.Object({
-          ...EventChanges,
-          end: Type.String({ description: "RFC 3339, like start" }),
-          start: Type.String({
-            description: `RFC 3339 with the UTC offset ${timeZone} has on that day, such as 2026-10-27T10:00:00+01:00`,
-          }),
-          summary: Type.String({ description: "The event's title" }),
+      replay: "safe",
+      structuredOutputSchema: EventsOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "adding to your calendar",
+    tool: defineTool({
+      description:
+        "Add an event to the user's own calendar, with no guests. Unless he allowed this for good, it waits for his /yes on the exact event. Add guests afterwards with calendar_update.",
+      execute: async (args, api, toolContext) =>
+        typedOutcome(
+          Event,
+          await approvals.request(api, toolContext, () => ({
+            arguments: { ...args },
+            grants: ["adding events without guests to your calendar"],
+            run: async ({ context, env }) =>
+              eventOf(
+                await programJson(
+                  "gws",
+                  EventResponse,
+                  env,
+                  [
+                    "calendar",
+                    "events",
+                    "insert",
+                    ...params({ calendarId: "primary" }),
+                    "--json",
+                    JSON.stringify({
+                      description: args.description,
+                      end: { dateTime: args.end, timeZone },
+                      location: args.location,
+                      start: { dateTime: args.start, timeZone },
+                      summary: args.summary,
+                    }),
+                  ],
+                  context
+                )
+              ),
+            state: {},
+            summary: `add an event to your calendar, ${eventText(args)}, with no guests`,
+            tool: "calendar_add",
+          }))
+        ),
+      name: "calendar_add",
+      parameters: Type.Object({
+        ...EventChanges,
+        end: Type.String({ description: "RFC 3339, like start" }),
+        start: Type.String({
+          description: `RFC 3339 with the UTC offset ${timeZone} has on that day, such as 2026-10-27T10:00:00+01:00`,
         }),
-        structuredOutputSchema: Type.Union([Event, Asked]),
+        summary: Type.String({ description: "The event's title" }),
       }),
-    },
-    {
-      flow: true,
-      phrase: "changing your calendar",
-      tool: defineTool({
-        description:
-          "Change an event on the user's calendar by its id from calendar_events: move it, rename it, or set its guests, who then get an invitation. Unless he allowed it for good, it waits for his /yes on the exact change.",
-        execute: async (args, api) =>
-          typedOutcome(
-            Event,
-            await approvals.request(api, async ({ context, env }) => {
+      structuredOutputSchema: Type.Union([Event, Asked]),
+    }),
+  },
+  {
+    flow: true,
+    phrase: "changing your calendar",
+    tool: defineTool({
+      description:
+        "Change an event on the user's calendar by its id from calendar_events: move it, rename it, or set its guests, who then get an invitation. Unless he allowed it for good, it waits for his /yes on the exact change.",
+      execute: async (args, api, toolContext) =>
+        typedOutcome(
+          Event,
+          await approvals.request(
+            api,
+            toolContext,
+            async ({ context, env }) => {
               const before = await readEvent(env, args.id, context);
               const guests = args.guests?.map((guest) => guest.toLowerCase());
-
-              const added = (guests ?? []).filter(
-                (guest) => !before.guests.includes(guest)
-              );
 
               const { guests: _guests, id: _id, ...fields } = args;
               const patch: Record<string, JsonValue> = {};
@@ -666,14 +681,21 @@ export const createGoogleTools = (
                 patch.summary = fields.summary;
               }
 
+              const changesFields = Object.keys(patch).some(
+                (key) => key !== "attendees"
+              );
+
+              // Setting guests emails every guest on the list, the new and the old.
+              const emailed = guests ?? [];
+
               return {
                 arguments: { ...args },
-                grants:
-                  added.length === 0 && guests === undefined
-                    ? [
-                        "changing events on your calendar without changing guests",
-                      ]
-                    : added.map((guest) => `calendar invitations to ${guest}`),
+                grants: [
+                  ...(changesFields
+                    ? ["changing events on your calendar"]
+                    : []),
+                  ...emailed.map((guest) => `calendar emails to ${guest}`),
+                ],
                 run: async (where) =>
                   eventOf(
                     await programJson(
@@ -699,32 +721,36 @@ export const createGoogleTools = (
                 summary: `change the event ${quoted(before.summary)} on ${before.start}: ${eventText(fields) || "no field changes"}${guests === undefined ? "" : `, with the guests ${quoted(guests.join(", "))}, who get an email`}`,
                 tool: "calendar_update",
               };
-            })
-          ),
-        name: "calendar_update",
-        parameters: Type.Object({
-          ...EventChanges,
-          guests: Type.Optional(
-            Type.Array(Type.String(), {
-              description:
-                "The full guest list by email, replacing the current one",
-            })
-          ),
-          id: Type.String({ description: "The event id from calendar_events" }),
-        }),
-        structuredOutputSchema: Type.Union([Event, Asked]),
+            }
+          )
+        ),
+      name: "calendar_update",
+      parameters: Type.Object({
+        ...EventChanges,
+        guests: Type.Optional(
+          Type.Array(Type.String(), {
+            description:
+              "The full guest list by email, replacing the current one",
+          })
+        ),
+        id: Type.String({ description: "The event id from calendar_events" }),
       }),
-    },
-    {
-      flow: true,
-      phrase: "removing a calendar event",
-      tool: defineTool({
-        description:
-          "Delete an event from the user's calendar by its id. Guests get a cancellation. Unless he allowed it for good, it waits for his /yes.",
-        execute: async (args, api) =>
-          typedOutcome(
-            DeletedOutput,
-            await approvals.request(api, async ({ context, env }) => {
+      structuredOutputSchema: Type.Union([Event, Asked]),
+    }),
+  },
+  {
+    flow: true,
+    phrase: "removing a calendar event",
+    tool: defineTool({
+      description:
+        "Delete an event from the user's calendar by its id. Guests get a cancellation. Unless he allowed it for good, it waits for his /yes.",
+      execute: async (args, api, toolContext) =>
+        typedOutcome(
+          DeletedOutput,
+          await approvals.request(
+            api,
+            toolContext,
+            async ({ context, env }) => {
               const event = await readEvent(env, args.id, context);
 
               return {
@@ -757,91 +783,92 @@ export const createGoogleTools = (
                 summary: `delete the event ${quoted(event.summary)} on ${event.start}${event.guests.length === 0 ? "" : `, emailing a cancellation to ${quoted(event.guests.join(", "))}`}`,
                 tool: "calendar_delete",
               };
-            })
-          ),
-        name: "calendar_delete",
-        parameters: Type.Object({
-          id: Type.String({ description: "The event id from calendar_events" }),
-        }),
-        structuredOutputSchema: Type.Union([DeletedOutput, Asked]),
+            }
+          )
+        ),
+      name: "calendar_delete",
+      parameters: Type.Object({
+        id: Type.String({ description: "The event id from calendar_events" }),
       }),
-    },
-    {
-      flow: true,
-      phrase: "searching your Drive",
-      tool: defineTool({
-        description:
-          "Find files in the user's Google Drive by words in their name or text. Read one with drive_read.",
-        execute: async (args, api, context) => {
-          const words = args.query
-            .replaceAll("\\", "\\\\")
-            .replaceAll("'", "\\'");
+      structuredOutputSchema: Type.Union([DeletedOutput, Asked]),
+    }),
+  },
+  {
+    flow: true,
+    phrase: "searching your Drive",
+    tool: defineTool({
+      description:
+        "Find files in the user's Google Drive by words in their name or text. Read one with drive_read.",
+      execute: async (args, api, context) => {
+        const words = args.query
+          .replaceAll("\\", "\\\\")
+          .replaceAll("'", "\\'");
 
-          const found = await programJson(
-            "gws",
-            DriveList,
-            api.env,
-            [
-              "drive",
-              "files",
-              "list",
-              ...params({
-                fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
-                orderBy: "modifiedTime desc",
-                pageSize: Math.min(args.max ?? DEFAULT_MAX, MAX_SEARCH_RESULTS),
-                q: `(name contains '${words}' or fullText contains '${words}') and trashed = false`,
-              }),
-            ],
-            context
-          );
+        const found = await programJson(
+          "gws",
+          DriveList,
+          api.env,
+          [
+            "drive",
+            "files",
+            "list",
+            ...params({
+              fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
+              orderBy: "modifiedTime desc",
+              pageSize: Math.min(args.max ?? DEFAULT_MAX, MAX_SEARCH_RESULTS),
+              q: `(name contains '${words}' or fullText contains '${words}') and trashed = false`,
+            }),
+          ],
+          context
+        );
 
-          return typed(DriveSearchOutput, { files: found.files ?? [] });
-        },
-        name: "drive_search",
-        parameters: Type.Object({
-          max: Type.Optional(
-            Type.Integer({ maximum: MAX_SEARCH_RESULTS, minimum: 1 })
-          ),
-          query: Type.String(),
-        }),
-        replay: "safe",
-        structuredOutputSchema: DriveSearchOutput,
+        return typed(DriveSearchOutput, { files: found.files ?? [] });
+      },
+      name: "drive_search",
+      parameters: Type.Object({
+        max: Type.Optional(
+          Type.Integer({ maximum: MAX_SEARCH_RESULTS, minimum: 1 })
+        ),
+        query: Type.String(),
       }),
-    },
-    {
-      flow: true,
-      phrase: "reading a file from your Drive",
-      tool: defineTool({
-        description:
-          "Read a Google Drive file by its id from drive_search or a Drive link. Docs and slides come back as text and sheets as CSV; other files, such as PDFs and images, are saved in the workspace's drive folder for read, bash or send_file.",
-        execute: async (args, api, context) => {
-          const id =
-            /\/d\/(?<id>[\w-]+)/u.exec(args.file)?.groups?.id ?? args.file;
+      replay: "safe",
+      structuredOutputSchema: DriveSearchOutput,
+    }),
+  },
+  {
+    flow: true,
+    phrase: "reading a file from your Drive",
+    tool: defineTool({
+      description:
+        "Read a Google Drive file by its id from drive_search or a Drive link. Docs and slides come back as text and sheets as CSV; other files, such as PDFs and images, are saved in the workspace's drive folder for read, bash or send_file.",
+      execute: async (args, api, context) => {
+        const id =
+          /\/d\/(?<id>[\w-]+)/u.exec(args.file)?.groups?.id ?? args.file;
 
-          const file = await programJson(
-            "gws",
-            DriveFile,
-            api.env,
-            [
-              "drive",
-              "files",
-              "get",
-              ...params({ fields: "id,name,mimeType", fileId: id }),
-            ],
-            context
-          );
+        const file = await programJson(
+          "gws",
+          DriveFile,
+          api.env,
+          [
+            "drive",
+            "files",
+            "get",
+            ...params({ fields: "id,name,mimeType", fileId: id }),
+          ],
+          context
+        );
 
-          const exportAs = EXPORTS.get(file.mimeType);
-          const name = `${file.id}-${file.name.replaceAll(/[^\w.-]+/gu, "_")}${exportAs === undefined ? "" : ".txt"}`;
+        const exportAs = EXPORTS.get(file.mimeType);
+        const name = `${file.id}-${file.name.replaceAll(/[^\w.-]+/gu, "_")}${exportAs === undefined ? "" : ".txt"}`;
+        const download = path.join(layout.downloads, randomUUID());
 
-          mkdirSync(driveDir, { recursive: true });
+        mkdirSync(layout.downloads, { recursive: true });
 
-          // gws writes only below its working folder, the data folder, so the path is relative to that.
-          const target = path.relative(
-            layout.dataDir,
-            path.join(driveDir, name)
-          );
+        // gws writes only below its working folder, the data folder, which no tool can change. The file then
+        // goes into the workspace through the same checks as the write tool, so a link there cannot redirect it.
+        const target = path.relative(layout.dataDir, download);
 
+        try {
           await programJson(
             "gws",
             EmptyResponse,
@@ -866,36 +893,40 @@ export const createGoogleTools = (
             context
           );
 
-          const saved = path.join(layout.dataDir, target);
+          const content = readFileSync(download);
+          const saved = path.join(layout.drive, name);
+
+          await writeFile(saved, content, context);
+
+          const workspacePath = path.relative(layout.workspace, saved);
 
           if (exportAs === undefined) {
-            return typed(DriveReadOutput, {
-              name: file.name,
-              workspacePath: path.relative(layout.workspace, saved),
-            });
+            return typed(DriveReadOutput, { name: file.name, workspacePath });
           }
 
-          const content = readFileSync(saved, "utf-8");
+          const words = content.toString("utf-8");
 
           return typed(DriveReadOutput, {
             name: file.name,
             text:
-              content.length > DRIVE_TEXT_CHARS
-                ? `${content.slice(0, DRIVE_TEXT_CHARS)}\n[cut at ${DRIVE_TEXT_CHARS} characters; the whole text is in the workspace path]`
-                : content,
-            workspacePath: path.relative(layout.workspace, saved),
+              words.length > DRIVE_TEXT_CHARS
+                ? `${words.slice(0, DRIVE_TEXT_CHARS)}\n[cut at ${DRIVE_TEXT_CHARS} characters; the whole text is in the workspace path]`
+                : words,
+            workspacePath,
           });
-        },
-        name: "drive_read",
-        parameters: Type.Object({
-          file: Type.String({ description: "The file's id or its Drive link" }),
-        }),
-        replay: "safe",
-        structuredOutputSchema: DriveReadOutput,
+        } finally {
+          rmSync(download, { force: true });
+        }
+      },
+      name: "drive_read",
+      parameters: Type.Object({
+        file: Type.String({ description: "The file's id or its Drive link" }),
       }),
-    },
-  ];
-};
+      replay: "safe",
+      structuredOutputSchema: DriveReadOutput,
+    }),
+  },
+];
 
 /** What the tools prompt says about Google, when Google is set up. */
 export const GOOGLE_PROMPT = `Google: gmail_draft and gmail_modify work at once. gmail_send, calendar_add, calendar_update and
