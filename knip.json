@@ -9,7 +9,8 @@
     "test/save-link.ts",
     "test/release.ts",
     "test/security-fixes.ts",
-    "test/hostile-content.ts"
+    "test/hostile-content.ts",
+    "test/send.ts"
   ],
   "ignoreBinaries": ["gws"],
   "ignoreDependencies": ["@llamaindex/liteparse"]
