@@ -6,7 +6,7 @@ import type {
   TextContent,
 } from "@earendil-works/pi-ai";
 
-import { neutralize } from "../conversation.ts";
+import { INPUT_TAG, neutralize } from "../conversation.ts";
 import { PROMPT } from "../prompt.ts";
 
 export const LINE_BYTES = 512;
@@ -27,9 +27,9 @@ export const compressTask = (id: number, kind: string, text: string): string =>
   `Compaction: compress message ${id} into one line of at most ${LINE_BYTES} bytes
 (about 70 words), the length of this ruler:
 ${RULER}
-<input>
+<${INPUT_TAG}>
 ${neutralize(kind)}: ${neutralize(text)}
-</input>`;
+</${INPUT_TAG}>`;
 
 export const mergeTask = (
   names: readonly [string, string],
@@ -41,14 +41,14 @@ ${LINE_BYTES} bytes (about 70 words), the length of this ruler:
 ${RULER}
 <chat> may hold their messages, ${range[0]} to ${range[1]}, in more detail: take details
 of them from there too.
-<input>
+<${INPUT_TAG}>
 ${neutralize(lines[0])}
 ${neutralize(lines[1])}
-</input>`;
+</${INPUT_TAG}>`;
 
 const tooLong = (line: string): string =>
   `Too long: your line is ${bytes(line)} bytes, over the ${LINE_BYTES}-byte limit. Write
-the whole line again for the same <input>, cutting just enough of the
+the whole line again for the same <${INPUT_TAG}>, cutting just enough of the
 least valuable items to fit before this cut:
 ${Buffer.from(line, "utf-8").subarray(0, LINE_BYTES).toString("utf-8")}| ← LIMIT`;
 

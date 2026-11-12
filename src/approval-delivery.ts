@@ -27,12 +27,22 @@ const requestText = ({ grants, id, summary }: ApprovalRequest): string => {
   return `${REQUEST_PREFIX}${id}'   /'no ${id}'${always}\n\n*Shrok wants to:*\n${summary}${lasting}\n\nFull details are attached. The request stays open until you answer.`;
 };
 
+/** What the owner reads for each way a request ends. */
+const OUTCOME_WORDS: Readonly<Record<RequestState, string>> = {
+  changed: "not done, as it changed",
+  declined: "declined",
+  done: "done",
+  failed: "failed",
+  revoked: "no longer open",
+  stopped: "stopped",
+};
+
 /** The request's message once it ended. */
 export const outcomeText = (
   { id, summary }: ApprovalRequest,
   state: RequestState
 ): string =>
-  `*Request ${id}: ${state} at ${clockTime.format(new Date())}*\n\n${summary}\n\nFull details remain attached.`;
+  `*Request ${id}: ${OUTCOME_WORDS[state]} at ${clockTime.format(new Date())}*\n\n${summary}\n\nFull details remain attached.`;
 
 /** Whether a message is a request, by the commands it starts with. */
 export const isApprovalRequestText = (value: string | undefined): boolean =>

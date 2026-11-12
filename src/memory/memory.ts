@@ -134,10 +134,8 @@ export class Memory {
     return this.#store.firstMessageFrom(source);
   }
 
-  async viewFor(task: number, start: number): Promise<TextContent[]> {
+  async viewFor(start: number): Promise<TextContent[]> {
     const view = this.#turnViews.get(start) ?? (await this.#buildView(start));
-
-    this.#store.saveTurnView(task, start, view.summarized, view.lines);
 
     return view.blocks;
   }

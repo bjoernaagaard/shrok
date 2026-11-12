@@ -16,6 +16,7 @@ import type { Approvals } from "./approvals.ts";
 import { typed } from "./output.ts";
 import type { ShrokTool } from "./policy.ts";
 import { programJson } from "./programs.ts";
+import { MAX_FILE_BYTES } from "./workspace.ts";
 import type { WriteFile } from "./workspace.ts";
 
 const DEFAULT_MAX = 10;
@@ -178,6 +179,7 @@ const DriveFile = Type.Object({
   mimeType: Type.String(),
   modifiedTime: Type.Optional(Type.String()),
   name: Type.String(),
+  size: Type.Optional(Type.String()),
   webViewLink: Type.Optional(Type.String()),
 });
 
@@ -685,8 +687,16 @@ export const createGoogleTools = (
                 (key) => key !== "attendees"
               );
 
-              // Setting guests emails every guest on the list, the new and the old.
-              const emailed = guests ?? [];
+              // Setting guests emails every guest on the new list, and every guest it removes.
+              const emailed =
+                guests === undefined
+                  ? []
+                  : [
+                      ...new Set([
+                        ...before.guests.map((guest) => guest.toLowerCase()),
+                        ...guests,
+                      ]),
+                    ];
 
               return {
                 arguments: { ...args },
@@ -853,12 +863,19 @@ export const createGoogleTools = (
             "drive",
             "files",
             "get",
-            ...params({ fields: "id,name,mimeType", fileId: id }),
+            ...params({ fields: "id,name,mimeType,size", fileId: id }),
           ],
           context
         );
 
         const exportAs = EXPORTS.get(file.mimeType);
+
+        if (exportAs === undefined && Number(file.size ?? 0) > MAX_FILE_BYTES) {
+          throw new Error(
+            `${file.name} is ${Math.round(Number(file.size) / (1024 * 1024))} MB, more than the ${MAX_FILE_BYTES / (1024 * 1024)} MB a workspace file may be. Ask the owner to open it in Drive.`
+          );
+        }
+
         const name = `${file.id}-${file.name.replaceAll(/[^\w.-]+/gu, "_")}${exportAs === undefined ? "" : ".txt"}`;
         const download = path.join(layout.downloads, randomUUID());
 

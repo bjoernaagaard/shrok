@@ -5,21 +5,39 @@ import type { EntryId, Submission } from "@earendil-works/pi-durable";
 import { localTime } from "./time.ts";
 
 /**
- * Who a message is from: the owner, or an event, such as a schedule firing or a request's outcome. Only the owner's
- * words are orders. An event's text can hold what a page or an email said, so it must never pass for his.
+ * Who a message is from: the owner; a schedule firing, which carries Shrok's own note of what to do; or an event,
+ * such as a request's outcome. Only the owner's words and his schedules start work. An event's text can hold what a
+ * page or an email said, so it must never pass for his.
  */
-export type From = "owner" | "event";
+export type From = "owner" | "schedule" | "event";
 
-const TAGS: Readonly<Record<From, string>> = { event: "event", owner: "sent" };
+/** The tag above a message, by who it is from. */
+export const TAGS = {
+  event: "event",
+  owner: "sent",
+  schedule: "due",
+} as const satisfies Readonly<Record<From, string>>;
+
+/** The tags Shrok's memory view wraps around the chat and around a compaction's input. */
+export const CHAT_TAG = "chat";
+export const INPUT_TAG = "input";
 
 /** The local time above a message, in a tag that says who it is from, so the model reads times as the owner does. */
 const frame = (from: From, at: Date | number): string =>
   `<${TAGS[from]}>${localTime.format(at)}</${TAGS[from]}>\n\n`;
 
-/** Matches the frame above a message, for the memory log, which keeps the message without it and logs who it is from. */
-export const FRAME = /^<(?<tag>sent|event)>[^<]*<\/(?:sent|event)>\s*/u;
+const FRAME_NAMES = Object.values(TAGS).join("|");
 
-const FRAME_TAG = /<(?=\/?(?:chat|input|sent|event)\b)/giu;
+/** Matches the frame above a message, for the memory log, which keeps the message without it and logs who it is from. */
+export const FRAME = new RegExp(
+  `^<(?<tag>${FRAME_NAMES})>[^<]*</(?:${FRAME_NAMES})>\\s*`,
+  "u"
+);
+
+const FRAME_TAG = new RegExp(
+  `<(?=/?(?:${CHAT_TAG}|${INPUT_TAG}|${FRAME_NAMES})\\b)`,
+  "giu"
+);
 
 /** Text with the frame tags defused, so a quoted page or message cannot close a frame and pose as another. */
 export const neutralize = (text: string): string =>
@@ -86,8 +104,8 @@ export const ask = async (
     };
   }
 
-  return {
-    answered: true,
-    text: answerText(await conversation.answerOf(settled.answer)),
-  };
+  const text = answerText(await conversation.answerOf(settled.answer));
+
+  // An answer can end with a tool, such as send_file, and no words: the phone still needs a reply to keep.
+  return { answered: true, text: text === "" ? "Done." : text };
 };

@@ -1,13 +1,20 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
-import { REPLY_BUDGET_MS, Session, StageFailedError } from "./shrok.ts";
+import {
+  approvalId,
+  isReply,
+  REPLY_BUDGET_MS,
+  Session,
+  StageFailedError,
+} from "./shrok.ts";
 
 const POST =
   "https://x.com/kr0der/status/2106429105671643587?s=46&t=kEBcxZxM8ciCA_idlEKETw";
 
 const FULL_TEXT_ONLY = "Coordinator updates";
-const ASKS = "*Shrok wants to:*";
+const POLL_MS = 5000;
 
 const session = await Session.open("x-post");
 const itemsDir = path.join(session.dataDir, "workspace", "items");
@@ -15,34 +22,58 @@ const itemsDir = path.join(session.dataDir, "workspace", "items");
 const reads = (): number =>
   session.toolCalls().filter((tool) => tool === "x_read_post").length;
 
-const share = async (stage: string): Promise<string> => {
-  const shared = await session.share(POST);
+const savedPost = async (): Promise<string | undefined> => {
+  const saved = await readdir(itemsDir).catch(() => []);
 
-  const answer = await session.waitFor(
-    stage,
-    shared,
-    REPLY_BUDGET_MS,
-    (text) => !text.startsWith(ASKS)
+  const items = await Promise.all(
+    saved
+      .filter((name) => name.endsWith(".md"))
+      .map(async (name) => await readFile(path.join(itemsDir, name), "utf-8"))
   );
 
-  const asks = session.messages
-    .slice(shared)
-    .filter((message) => message.text.startsWith(ASKS));
+  return items.find((text) => text.includes(FULL_TEXT_ONLY));
+};
 
-  if (asks.length > 0) {
-    throw new StageFailedError(
-      stage,
-      `reading the post asked for approval: ${asks[0]?.text ?? ""}`
-    );
+/** Waits until a saved item holds the post's full text, which only a read from X has. */
+const waitForPost = async (stage: string): Promise<string> => {
+  const deadline = Date.now() + REPLY_BUDGET_MS;
+
+  while (Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop
+    const item = await savedPost();
+
+    if (item !== undefined) {
+      return item;
+    }
+
+    // oxlint-disable-next-line no-await-in-loop
+    await sleep(POLL_MS);
   }
 
-  return answer.text;
+  throw new StageFailedError(stage, "no saved item holds the post's full text");
 };
 
 await session.finish("x-post", async () => {
   await session.start();
 
-  const firstAnswer = await share("first share");
+  // A paid read waits for the owner's /yes, as he gives it on his phone.
+  const shared = await session.share(POST);
+
+  const request = await session.waitFor(
+    "first share",
+    shared,
+    REPLY_BUDGET_MS,
+    (text) => approvalId(text) !== undefined
+  );
+
+  await session.answer(
+    "first share",
+    approvalId(request.text) ?? "",
+    "yes",
+    REPLY_BUDGET_MS
+  );
+
+  const item = await waitForPost("first share");
 
   if (reads() !== 1) {
     throw new StageFailedError(
@@ -51,25 +82,28 @@ await session.finish("x-post", async () => {
     );
   }
 
-  const saved = await readdir(itemsDir);
-  const files = saved.filter((name) => name.endsWith(".md"));
+  // A post saved before is answered from the item, so it neither asks nor reads from X again.
+  const again = await session.share(POST);
 
-  const items = await Promise.all(
-    files.map(
-      async (name) => await readFile(path.join(itemsDir, name), "utf-8")
-    )
+  const second = await session.waitFor(
+    "second share",
+    again,
+    REPLY_BUDGET_MS,
+    isReply
   );
 
-  const item = items.find((text) => text.includes(FULL_TEXT_ONLY));
+  const asked = session.messages
+    .slice(again)
+    .some((message) => approvalId(message.text) !== undefined);
 
-  if (item === undefined) {
+  if (asked) {
     throw new StageFailedError(
-      "first share",
-      `no saved item holds the post's full text (${files.length} items saved)`
+      "second share",
+      "sharing a saved post asked for a paid read"
     );
   }
 
-  const secondAnswer = await share("second share");
+  const secondAnswer = second.text;
 
   if (reads() !== 1) {
     throw new StageFailedError(
@@ -79,7 +113,7 @@ await session.finish("x-post", async () => {
   }
 
   return {
-    firstAnswer,
+    firstAnswer: request.text,
     item,
     secondAnswer,
     tools: session.toolCalls(),

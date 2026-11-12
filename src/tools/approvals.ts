@@ -41,12 +41,14 @@ export interface ApprovalRequest {
   readonly grants: readonly string[];
 }
 
+/** How a request ended. The phone picks the words the owner reads for each. */
 export type RequestState =
-  | "Done"
-  | "Failed"
+  | "done"
+  | "failed"
   | "declined"
   | "revoked"
-  | "changed";
+  | "changed"
+  | "stopped";
 
 export interface ApprovalPhone {
   owner: () => Promise<ApprovalOwner>;
@@ -113,6 +115,7 @@ export type Decision =
   | "unavailable";
 
 interface Waiting {
+  readonly tool: string;
   readonly owner: ApprovalOwner;
   readonly request: ApprovalRequest;
   readonly createdAt: number;
@@ -234,8 +237,9 @@ export class Approvals {
   readonly #details: string;
   readonly #env: ExecutionEnv;
   readonly #waiting = new Map<number, Waiting>();
-  /** Approved actions running now, so /stop can abort them. */
-  readonly #running = new Set<AbortController>();
+  /** Approved actions running now, so /stop can abort them and close can wait for them. */
+  readonly #running = new Map<AbortController, Promise<void>>();
+  #closing = false;
   readonly #captions = new Set<Promise<void>>();
   readonly #phone = Promise.withResolvers<ApprovalPhone>();
   readonly #report = Promise.withResolvers<ReportOutcome>();
@@ -371,6 +375,7 @@ export class Approvals {
       owner,
       prepare,
       request: { grants: action.grants, id, summary: action.summary },
+      tool: action.tool,
     };
 
     this.#waiting.set(id, waiting);
@@ -443,7 +448,13 @@ export class Approvals {
       }
     }
 
-    void this.#carryOut(waiting);
+    const controller = new AbortController();
+
+    const running = this.#carryOut(waiting, controller.signal).finally(() => {
+      this.#running.delete(controller);
+    });
+
+    this.#running.set(controller, running);
 
     return verdict === "always" && waiting.request.grants.length === 0
       ? "decidedOnce"
@@ -486,25 +497,33 @@ export class Approvals {
     );
   }
 
+  /** Whether a request by one of these tools is waiting for the owner, so what it needs can stay ready. */
+  waitingFor(tools: ReadonlySet<string>): boolean {
+    return [...this.#waiting.values()].some(({ tool }) => tools.has(tool));
+  }
+
   /** Aborts the approved actions running now; false when none was. */
   stop(): boolean {
-    const any = this.#running.size > 0;
-
-    for (const controller of this.#running) {
+    for (const controller of this.#running.keys()) {
       controller.abort();
     }
 
-    return any;
+    return this.#running.size > 0;
   }
 
-  /** Revokes the open requests and shows it on their messages, so no stale /yes stays on the phone. */
+  /**
+   * Revokes the open requests and shows it on their messages, so no stale /yes stays on the phone, and waits for
+   * the stopped actions to settle before the database closes.
+   */
   async close(): Promise<void> {
+    this.#closing = true;
     this.stop();
 
     for (const id of this.#waiting.keys()) {
       this.#close(id, "revoked");
     }
 
+    await Promise.allSettled(this.#running.values());
     await Promise.allSettled(this.#captions);
     this.#prune();
     this.#db.close();
@@ -653,16 +672,13 @@ export class Approvals {
   }
 
   /** Prepares the approved action again and runs it only if nothing the owner saw has changed. */
-  async #carryOut(waiting: Waiting): Promise<void> {
+  async #carryOut(waiting: Waiting, signal: AbortSignal): Promise<void> {
     const { id, summary } = waiting.request;
-    const controller = new AbortController();
 
     const where = {
-      context: withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
+      context: withAbortSignal(signal, BACKGROUND_CONTEXT),
       env: this.#env,
     };
-
-    this.#running.add(controller);
 
     try {
       let action: Action;
@@ -674,10 +690,14 @@ export class Approvals {
           throw new Error("what it would do changed after he was asked");
         }
       } catch (error) {
-        this.#close(id, "changed");
+        const stopped = signal.aborted;
+
+        this.#close(id, stopped ? "stopped" : "changed");
         await this.#tell(
-          `[Request ${id} approved, but not done] ${summary}\n\nIt was not done because ${String(error)}. Ask again if it is still wanted.`,
-          `approval:${id}:changed`
+          stopped
+            ? `[Request ${id} approved, but stopped] ${summary}\n\nIt was stopped before it started, so nothing was done.`
+            : `[Request ${id} approved, but not done] ${summary}\n\nIt was not done because ${String(error)}. Ask again if it is still wanted.`,
+          `approval:${id}:${stopped ? "stopped" : "changed"}`
         );
 
         return;
@@ -699,26 +719,34 @@ export class Approvals {
         const result = await action.run(where);
 
         this.#setState(id, "completed");
-        this.#show(waiting, "Done");
+        this.#show(waiting, "done");
         await this.#tell(
           `[Request ${id} approved and done] ${summary}\n\nResult:\n${resultText(result)}`,
           `approval:${id}:done`
         );
       } catch (error) {
+        const stopped = signal.aborted;
+
         this.#setState(id, "outcome_unknown");
-        this.#show(waiting, "Failed");
+        this.#show(waiting, stopped ? "stopped" : "failed");
         await this.#tell(
-          `[Request ${id} approved, but it failed] ${summary}\n\nError: ${String(error)}\n\nCheck what actually happened before trying again.`,
-          `approval:${id}:failed`
+          `[Request ${id} approved, but it ${stopped ? "was stopped while running" : "failed"}] ${summary}\n\nError: ${String(error)}\n\nCheck what actually happened before trying again.`,
+          `approval:${id}:${stopped ? "stopped" : "failed"}`
         );
       }
     } finally {
-      this.#running.delete(controller);
       this.#prune();
     }
   }
 
   async #tell(message: string, requestId: string): Promise<void> {
+    // While Shrok shuts down the conversation is closing too, so an outcome then is only recorded.
+    if (this.#closing) {
+      recordEvent("approvals", `Not reported during shutdown: ${requestId}`);
+
+      return;
+    }
+
     try {
       const report = await this.#report.promise;
 
@@ -731,7 +759,10 @@ export class Approvals {
     }
   }
 
-  #close(id: number, state: "declined" | "revoked" | "changed"): boolean {
+  #close(
+    id: number,
+    state: "declined" | "revoked" | "changed" | "stopped"
+  ): boolean {
     const waiting = this.#waiting.get(id);
 
     if (waiting === undefined) {

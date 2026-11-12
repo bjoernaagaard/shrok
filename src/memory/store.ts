@@ -31,7 +31,6 @@ const FailureSchema = Type.Object({
 });
 
 const MAX_RETAINED_MESSAGES = 4096;
-const MAX_RETAINED_REQUESTS = 128;
 
 const MaybeCountSchema = Type.Object({
   count: Type.Union([Type.Integer(), Type.Null()]),
@@ -48,7 +47,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, text TEXT NOT NULL, date INTEGER NOT NULL, source INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS nodes (level INTEGER NOT NULL, idx INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (level, idx));
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS requests (task INTEGER PRIMARY KEY, date INTEGER NOT NULL, start INTEGER NOT NULL, summarized INTEGER NOT NULL, lines TEXT NOT NULL);
+DROP TABLE IF EXISTS requests;
 CREATE TABLE IF NOT EXISTS failures (level INTEGER NOT NULL, idx INTEGER NOT NULL, attempts INTEGER NOT NULL, retry_at INTEGER NOT NULL, PRIMARY KEY (level, idx));
 `;
 
@@ -91,11 +90,6 @@ export class MemoryStore {
     this.#db
       .prepare("DELETE FROM failures WHERE idx * (1 << level) < ?")
       .run(first);
-    this.#db
-      .prepare(
-        "DELETE FROM requests WHERE task <= (SELECT task FROM requests ORDER BY task DESC LIMIT 1 OFFSET ?)"
-      )
-      .run(MAX_RETAINED_REQUESTS);
   }
 
   failure(line: Line): { attempts: number; retryAt: number } {
@@ -208,20 +202,6 @@ export class MemoryStore {
     this.#db
       .prepare("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)")
       .run(key, String(value));
-  }
-
-  saveTurnView(
-    task: number,
-    start: number,
-    summarized: number,
-    lines: readonly Line[]
-  ): void {
-    this.#db
-      .prepare(
-        "INSERT OR REPLACE INTO requests (task, date, start, summarized, lines) VALUES (?, ?, ?, ?, ?)"
-      )
-      .run(task, Date.now(), start, summarized, JSON.stringify(lines));
-    this.prune();
   }
 
   close(): void {

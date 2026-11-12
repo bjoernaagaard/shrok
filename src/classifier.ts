@@ -16,7 +16,9 @@ import { Value } from "typebox/value";
 /** Anthropic has no classifier API, so this one answers through a single forced, strict tool call. */
 const TOOL_CALL_API = "anthropic-tool-call";
 const ANSWER_TOOL = "answer";
-const CLASSIFIER_ID = "claude-haiku-5-5";
+
+/** The Anthropic chat model Shrok also offers as a classifier, and the default small model. */
+export const CLASSIFIER_ID = "claude-haiku-5-5";
 
 /** Each request allows a fixed number of classify calls, and this bounds what each one sends. */
 const MAX_STATE_CHARS = 200_000;
@@ -201,7 +203,7 @@ const classify = async (
 export const isCalibrated = (model: ClassifierModel<ClassifierApi>): boolean =>
   model.api !== TOOL_CALL_API;
 
-/** Adds `anthropic/claude-haiku-5-5` as a classifier to Anthropic's built-in provider. */
+/** Adds the CLASSIFIER_ID model as a classifier to Anthropic's built-in provider. */
 export const withAnthropicClassifier = (
   provider: Provider,
   models: Models

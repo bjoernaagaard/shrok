@@ -316,17 +316,16 @@ export const createSchedules = () => {
           },
           {
             at: due,
-            from: "event",
+            from: "schedule",
             requestId: `schedule:${task.id}:${due}`,
             text: `[Scheduled] ${task.input.what}`,
           },
           context
         );
 
-        const done =
-          answer.answered && answer.text !== ""
-            ? answer.text
-            : `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`;
+        const done = answer.answered
+          ? answer.text
+          : `I couldn't do this scheduled task: ${task.input.what}\n\nAsk me to do it now if you still want it.`;
 
         await runtime.commit(
           () => ({

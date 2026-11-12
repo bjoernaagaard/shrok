@@ -22,7 +22,9 @@ import { BUNDLED_SKILLS } from "./skills.ts";
 
 const MAX_WORKSPACE_BYTES = 256 * 1024 * 1024;
 const MAX_WORKSPACE_ENTRIES = 4096;
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+
+/** The largest file write and edit may make, and so the largest file another tool may put in the workspace. */
+export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const ALLOCATION_BYTES = 4096;
 const STAT_BLOCK_BYTES = 512;
 const FILE_TOOLS = new Set(["read", "write", "edit"]);
@@ -144,7 +146,14 @@ export type WriteFile = (
  */
 export const createWorkspaceFiles = (layout: Layout) => {
   const { workspace } = layout;
-  const managed = new Set(layout.managed.map(({ dir }) => dir));
+
+  // Folders with limits of their own, or bash's own scratch space, which write's budget leaves out.
+  const unbudgeted = new Set([
+    ...layout.managed.map(({ dir }) => dir),
+    layout.bashHome,
+    layout.bashTemp,
+  ]);
+
   let pending: Promise<unknown> = Promise.resolve();
 
   const serialized = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -188,7 +197,7 @@ export const createWorkspaceFiles = (layout: Layout) => {
         throw new Error("The content exceeds the file tool byte budget.");
       }
 
-      const usage = workspaceUsage(workspace, managed);
+      const usage = workspaceUsage(workspace, unbudgeted);
       const parents = missingParents(target);
 
       const allocation = Math.max(

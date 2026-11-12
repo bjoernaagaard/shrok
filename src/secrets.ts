@@ -11,17 +11,14 @@ import path from "node:path";
 import process from "node:process";
 import { parseEnv } from "node:util";
 
+import { setting } from "./data-dir.ts";
 import { SECRETS } from "./integrations.ts";
 
 const SECRETS_FILE = "secrets.env";
 const TRAILING_NEWLINE = /\r?\n$/u;
 
 /** An empty variable counts as unset, as for every other setting. */
-const isSet = (name: string): boolean => {
-  const value = process.env[name];
-
-  return value !== undefined && value !== "";
-};
+const isSet = (name: string): boolean => setting(name) !== undefined;
 
 /** The mode bits below this value hold the permissions of the group and of others. */
 const GROUP_OR_OTHER_BITS = 0o100;

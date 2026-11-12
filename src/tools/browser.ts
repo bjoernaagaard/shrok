@@ -121,23 +121,37 @@ interface Open {
 class Session {
   readonly #stateFile: string;
   readonly #publicWeb: PublicWeb;
+  /** Whether a request about the open page waits for the owner, so the page must stay as it is. */
+  readonly #needed: () => boolean;
   #open: Promise<Open> | undefined;
   #idle: NodeJS.Timeout | undefined;
 
-  constructor(stateFile: string, publicWeb: PublicWeb) {
+  constructor(stateFile: string, publicWeb: PublicWeb, needed: () => boolean) {
     this.#stateFile = stateFile;
     this.#publicWeb = publicWeb;
+    this.#needed = needed;
   }
 
-  async page(): Promise<Page> {
+  /** Closes the browser after ten idle minutes, unless a request about its page still waits for the owner. */
+  #closeWhenIdle(): void {
     clearTimeout(this.#idle);
     this.#idle = setTimeout(() => {
+      if (this.#needed()) {
+        this.#closeWhenIdle();
+
+        return;
+      }
+
       // Idle cleanup has no caller. close still releases Chromium when persistence fails.
       void this.close().catch(() => {
         report("browser", "Browser idle cleanup or state persistence failed.");
       });
     }, IDLE_MS);
     this.#idle.unref();
+  }
+
+  async page(): Promise<Page> {
+    this.#closeWhenIdle();
 
     this.#open ??= this.#launch();
 
@@ -648,6 +662,26 @@ const gone = async (page: Page, ref: string) =>
     `Ref ${ref} is not on the page any more: the page changed since that read. Use a ref from this one.\n\n${await snapshot(page)}`
   );
 
+/** The tools whose requests are about the page the browser has open. */
+const PAGE_TOOLS = new Set(["browser_click", "browser_open", "browser_type"]);
+
+/** A text field as the owner approves typing into it: its name, label and kind. */
+const fieldOf = async (field: Locator) =>
+  await field.evaluate((node) => ({
+    kind: node.getAttribute("type") ?? node.tagName.toLowerCase(),
+    label:
+      node.getAttribute("aria-label") ??
+      [
+        ...("labels" in node && node.labels instanceof NodeList
+          ? node.labels
+          : []),
+      ]
+        .map((label) => label.textContent ?? "")
+        .join(" ")
+        .trim(),
+    name: node.getAttribute("name") ?? node.id,
+  }));
+
 const ElementParameters = {
   element: Type.String({
     description:
@@ -664,7 +698,9 @@ export const createBrowserTools = (
   approvals: Approvals,
   seenUrls: SeenUrls
 ) => {
-  const session = new Session(stateFile, publicWeb);
+  const session = new Session(stateFile, publicWeb, () =>
+    approvals.waitingFor(PAGE_TOOLS)
+  );
 
   /** A snapshot result, whose links count as seen. */
   const shown = (value: string) => {
@@ -719,25 +755,25 @@ export const createBrowserTools = (
       tool: defineTool({
         description:
           "Open a web page in the browser and read it. Use for pages that need clicking, such as booking sites; for reading an article use web_fetch. An address that neither the owner nor a tool gave waits for his /yes.",
-        execute: async (args, api, context) => {
-          const page = await session.page();
-
-          return textOutcome(
+        execute: async (args, api, context) =>
+          textOutcome(
             await seenUrls.open(
               api,
               "browser_open",
               args.url,
               context,
               async () => {
-                await page.goto(publicUrl(args.url), {
+                // The page the session has when it opens: after a /yes, the one it had when asking may be closed.
+                const current = await session.page();
+
+                await current.goto(publicUrl(args.url), {
                   waitUntil: "domcontentloaded",
                 });
 
-                return await settledText(page);
+                return await settledText(current);
               }
             )
-          );
-        },
+          ),
         name: "browser_open",
         parameters: Type.Object({ url: Type.String() }),
       }),
@@ -898,7 +934,12 @@ export const createBrowserTools = (
 
                   return await settledText(now);
                 },
-                state: { host, url: current.url() },
+                // The field itself is read again at /yes, so the text cannot land in a field he did not approve.
+                state: {
+                  field: await fieldOf(target),
+                  host,
+                  url: current.url(),
+                },
                 summary: `type ${quoted(args.text)} into ${quoted(args.element)} on ${host}`,
                 tool: "browser_type",
               };

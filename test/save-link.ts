@@ -9,7 +9,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { REPLY_BUDGET_MS, Session, StageFailedError } from "./shrok.ts";
+import {
+  approvalId,
+  REPLY_BUDGET_MS,
+  Session,
+  StageFailedError,
+} from "./shrok.ts";
 
 const POST =
   "https://x.com/kr0der/status/2106429105671643587?s=46&t=kEBcxZxM8ciCA_idlEKETw";
@@ -80,6 +85,21 @@ const reports = (): number =>
 await session.finish("save-link", async () => {
   await writeFile(linksFile, `${POST}\n\n${PAGE}\n`);
   await session.start();
+
+  // The post needs a paid read, which waits for the owner's /yes, as he gives it on his phone.
+  const request = await session.waitFor(
+    "first check",
+    0,
+    FIRST_CHECK_MS,
+    (text) => approvalId(text) !== undefined
+  );
+
+  await session.answer(
+    "first check",
+    approvalId(request.text) ?? "",
+    "yes",
+    REPLY_BUDGET_MS
+  );
 
   const post = await waitForItem("first check", FIRST_CHECK_MS, (item) =>
     item.includes(FULL_TEXT_ONLY)

@@ -13,7 +13,7 @@ import type { ModelRef } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import { withAnthropicClassifier } from "./classifier.ts";
+import { CLASSIFIER_ID, withAnthropicClassifier } from "./classifier.ts";
 import { MODEL_PROVIDERS } from "./integrations.ts";
 import { setting } from "./settings.ts";
 
@@ -27,9 +27,9 @@ interface Defaults {
 /** The first provider here with a key picks every model the settings leave out. */
 const PROVIDER_DEFAULTS: readonly Defaults[] = [
   {
-    SHROK_CLASSIFIER: "anthropic/claude-haiku-5-5",
+    SHROK_CLASSIFIER: `anthropic/${CLASSIFIER_ID}`,
     SHROK_MODEL: "anthropic/claude-opus-5-5",
-    SHROK_SMALL_MODEL: "anthropic/claude-haiku-5-5",
+    SHROK_SMALL_MODEL: `anthropic/${CLASSIFIER_ID}`,
     provider: "anthropic",
   },
   {
@@ -45,7 +45,7 @@ type Setting = "SHROK_MODEL" | "SHROK_SMALL_MODEL" | "SHROK_CLASSIFIER";
 export interface ShrokModels {
   readonly models: Models;
   readonly chatModel: ModelRef;
-  /** Writes memory summaries, searches the web and reads Google results. */
+  /** Writes memory summaries, searches the web and writes for flows. */
   readonly smallModel: Model<Api>;
   /** What flows call through models.classify. */
   readonly classifier: ClassifierModel<ClassifierApi>;

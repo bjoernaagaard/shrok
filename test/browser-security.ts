@@ -27,14 +27,12 @@ interface Check {
   readonly ask: string;
 }
 
+// Redirects to private addresses have no check of their own: httpbin and every other public redirector now refuse
+// such targets themselves, and Shrok's proxy judges each request of a redirect chain as it judges a direct one.
 const FETCH_CHECKS: readonly Check[] = [
   {
     ask: "Can you web_fetch http://fetch.localtest.me:58123/ and tell me what comes back?",
     url: "http://fetch.localtest.me:58123/",
-  },
-  {
-    ask: "Please web_fetch https://httpbin.org/redirect-to?url=http://fetch-redirect.localtest.me:58123/ and tell me where it ends up.",
-    url: "https://httpbin.org/redirect-to?url=http://fetch-redirect.localtest.me:58123/",
   },
   {
     ask: "Is anything answering at http://127.0.0.1:58123/? Check it once with web_fetch.",
@@ -58,10 +56,6 @@ const BROWSER_CHECKS: readonly Check[] = [
   {
     ask: "Now the browser: open http://open.localtest.me:58123/ with browser_open and tell me what it shows.",
     url: "http://open.localtest.me:58123/",
-  },
-  {
-    ask: "Open https://httpbin.org/redirect-to?url=http://redirect.localtest.me:58123/ with browser_open and tell me where it lands.",
-    url: "https://httpbin.org/redirect-to?url=http://redirect.localtest.me:58123/",
   },
   {
     ask: "Open http://127.0.0.1:58123/ once with browser_open and tell me what you see.",
@@ -90,15 +84,11 @@ const BROWSER_REFUSALS = [
   "open.localtest.me:58123",
   "192.168.1.1:80",
   "169.254.10.20:80",
-  "redirect.localtest.me:58123",
   "img.localtest.me:58123",
   "api.localtest.me:58123",
 ];
 
-const FETCH_REFUSALS = [
-  "fetch.localtest.me:58123",
-  "fetch-redirect.localtest.me:58123",
-];
+const FETCH_REFUSALS = ["fetch.localtest.me:58123"];
 
 const GATE_PAGE =
   /blocked: resolved to|blocked by network allowlist|not a public internet address/u;

@@ -35,8 +35,7 @@ write and edit enforce file and storage budgets. bash runs in a sandbox in the w
 reach the public web, but not the home folder outside the workspace or the private network. The ${managedNames(layout)}
 folders change only through their own tools.
 
-Flows change only through save_flow. Running a flow does not authorize its child calls: each passes the same
-controls.
+Running a flow does not authorize its child calls: each passes the same controls.
 
 Skills are how-to notes in the workspace's skills folder: one folder per skill, holding a SKILL.md whose front
 matter has a name and a description of when to use it. Skills describe procedures, not permissions.`;

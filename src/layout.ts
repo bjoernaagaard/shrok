@@ -15,6 +15,9 @@ export interface Layout {
   readonly workspace: string;
   /** Files read from the owner's Drive. */
   readonly drive: string;
+  /** bash's home and temp folders: its programs' caches and scratch files, outside the write tool's budget. */
+  readonly bashHome: string;
+  readonly bashTemp: string;
   readonly items: string;
   /** Files the owner shares, received into the items folder. */
   readonly files: string;
@@ -38,6 +41,8 @@ export const layoutOf = (dataDir: string): Layout => {
   const skills = path.join(workspace, "skills");
 
   return {
+    bashHome: path.join(workspace, ".home"),
+    bashTemp: path.join(workspace, ".tmp"),
     dataDir,
     downloads: path.join(dataDir, "downloads"),
     drive: path.join(workspace, "drive"),

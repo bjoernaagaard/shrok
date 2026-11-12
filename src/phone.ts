@@ -646,7 +646,7 @@ export const openPhone = async (
       await say(
         contactId,
         itemId,
-        "Done once. This kind of action always asks, so there was nothing to allow for good."
+        "Approved once. This kind of action always asks, so there was nothing to allow for good."
       );
 
       return;

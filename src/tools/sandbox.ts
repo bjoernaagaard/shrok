@@ -309,22 +309,21 @@ class BoundedBashEnv extends NodeExecutionEnv {
 export const createSandboxedBash = (layout: Layout) => {
   const { workspace } = layout;
 
-  // The system's temp folder is outside what the sandbox lets commands write, so mktemp and friends use this one.
-  const temporary = path.join(workspace, "tmp");
-
-  mkdirSync(temporary, { recursive: true });
+  // The system's temp folder and the real home are outside what the sandbox lets commands write.
+  mkdirSync(layout.bashHome, { recursive: true });
+  mkdirSync(layout.bashTemp, { recursive: true });
 
   const env = new BoundedBashEnv({ cwd: workspace });
 
   const tool = createBashTool({
     prepare: async (execution) => {
       execution.cwd = workspace;
-      // Programs look for their settings in HOME, which the sandbox denies, so point it at the workspace.
+      // Programs look for their settings in HOME, which the sandbox denies, so point it inside the workspace.
       execution.env = {
         ...safeEnv(),
-        HOME: workspace,
+        HOME: layout.bashHome,
         PATH: sandboxPath(),
-        TMPDIR: temporary,
+        TMPDIR: layout.bashTemp,
       };
       execution.inheritEnv = false;
       const wrapped = await SandboxManager.wrapWithSandbox(execution.command);

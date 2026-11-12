@@ -77,7 +77,7 @@ export const createMemory = (memory: Memory) => {
   const extension = defineExtension({
     hooks: [
       hook(GenerationTask, {
-        beforeRequest: async ({ messages }, api) => {
+        beforeRequest: async ({ messages }) => {
           memory.sync(messages);
 
           const start = turnStart(messages);
@@ -97,7 +97,7 @@ export const createMemory = (memory: Memory) => {
             past.filter((message) => message.role !== "system").length
           );
 
-          const view = await memory.viewFor(api.taskId, firstOfTurn);
+          const view = await memory.viewFor(firstOfTurn);
 
           return {
             messages: [

@@ -3,10 +3,12 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import { Value } from "typebox/value";
 
+import { CHAT_TAG } from "../conversation.ts";
+
 const LINES_PER_BLOCK = 4;
 
-const OPEN = "<chat>\n";
-const CLOSE = "</chat>";
+const OPEN = `<${CHAT_TAG}>\n`;
+const CLOSE = `</${CHAT_TAG}>`;
 
 export const chatBlocks = (lines: readonly string[]): TextContent[] => {
   const blocks: TextContent[] = [];
