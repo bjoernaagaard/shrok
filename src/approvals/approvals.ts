@@ -87,6 +87,8 @@ export interface Action {
   readonly state: JsonObject;
   /** What /always allows from now on. The action runs without asking once every one is allowed. Empty: always ask. */
   readonly grants: readonly string[];
+  /** Whether it acts on the page the browser has open, which must then stay open until the owner answers. */
+  readonly holdsPage?: boolean;
   /** Does the approved action and returns what the model should learn from it. */
   readonly run: (where: RunContext) => Promise<JsonValue>;
 }
@@ -115,7 +117,7 @@ export type Decision =
   | "unavailable";
 
 interface Waiting {
-  readonly tool: string;
+  readonly holdsPage: boolean;
   readonly owner: ApprovalOwner;
   readonly request: ApprovalRequest;
   readonly createdAt: number;
@@ -238,7 +240,7 @@ export class Approvals {
   readonly #env: ExecutionEnv;
   readonly #waiting = new Map<number, Waiting>();
   /** Approved actions running now, so /stop can abort them and close can wait for them. */
-  readonly #running = new Map<AbortController, Promise<void>>();
+  readonly #running = new Map<AbortController, Promise<unknown>>();
   #closing = false;
   readonly #captions = new Set<Promise<void>>();
   readonly #phone = Promise.withResolvers<ApprovalPhone>();
@@ -368,17 +370,39 @@ export class Approvals {
     );
 
     if (granted) {
+      // Tracked like an approved action, so /stop and shutdown reach it and the database outlives it.
+      const controller = new AbortController();
+
+      const signal =
+        context.abortSignal === undefined
+          ? controller.signal
+          : AbortSignal.any([controller.signal, context.abortSignal]);
+
+      const running = (async () => {
+        try {
+          const result = await action.run({
+            context: withAbortSignal(signal, context),
+            env: this.#env,
+          });
+
+          this.#setState(id, "completed");
+
+          return result;
+        } catch (error) {
+          this.#setState(id, "outcome_unknown");
+          throw error;
+        } finally {
+          this.#prune();
+        }
+      })();
+
+      // Its failure goes to the asking tool; close only needs it settled.
+      this.#running.set(controller, Promise.allSettled([running]));
+
       try {
-        const result = await action.run(where);
-
-        this.#setState(id, "completed");
-
-        return { ran: true, result };
-      } catch (error) {
-        this.#setState(id, "outcome_unknown");
-        throw error;
+        return { ran: true, result: await running };
       } finally {
-        this.#prune();
+        this.#running.delete(controller);
       }
     }
 
@@ -386,10 +410,10 @@ export class Approvals {
       bound,
       controller: new AbortController(),
       createdAt,
+      holdsPage: action.holdsPage === true,
       owner,
       prepare,
       request: { grants: action.grants, id, summary: action.summary },
-      tool: action.tool,
     };
 
     this.#waiting.set(id, waiting);
@@ -511,9 +535,9 @@ export class Approvals {
     );
   }
 
-  /** Whether a request by one of these tools is waiting for the owner, so what it needs can stay ready. */
-  waitingFor(tools: ReadonlySet<string>): boolean {
-    return [...this.#waiting.values()].some(({ tool }) => tools.has(tool));
+  /** Whether a request about the browser's open page waits for the owner, so the browser must stay open. */
+  holdsPage(): boolean {
+    return [...this.#waiting.values()].some(({ holdsPage }) => holdsPage);
   }
 
   /** Aborts the approved actions running now; false when none was. */

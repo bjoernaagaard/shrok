@@ -16,19 +16,17 @@ export const KINDS = {
   user: "the user's words",
 } as const;
 
-const KIND_OF: Readonly<Record<From, keyof typeof KINDS>> = {
-  event: "event",
-  owner: "user",
-  schedule: "schedule",
+const KIND_OF_TAG: Readonly<Record<(typeof TAGS)[From], keyof typeof KINDS>> = {
+  [TAGS.event]: "event",
+  [TAGS.owner]: "user",
+  [TAGS.schedule]: "schedule",
 };
 
-const isFrom = (key: string): key is From => key in TAGS;
+const isTag = (tag: string): tag is (typeof TAGS)[From] => tag in KIND_OF_TAG;
 
-const KIND_OF_TAG = new Map<string, keyof typeof KINDS>(
-  Object.entries(TAGS).flatMap(([from, tag]) =>
-    isFrom(from) ? [[tag, KIND_OF[from]] as const] : []
-  )
-);
+/** The kind a framed message is logged as. A message without a known frame is never taken for the owner's words. */
+const kindOfTag = (tag: string | undefined): keyof typeof KINDS =>
+  tag !== undefined && isTag(tag) ? KIND_OF_TAG[tag] : "event";
 
 const TOOL_OUTPUT_CHARS = 30_000;
 
@@ -83,8 +81,7 @@ export const toLogMessages = (
     const text = userText(message.content);
 
     // Logged by who it is from: only the owner's own messages are his words.
-    const kind =
-      KIND_OF_TAG.get(FRAME.exec(text)?.groups?.tag ?? "") ?? "event";
+    const kind = kindOfTag(FRAME.exec(text)?.groups?.tag);
 
     add(kind, text.replace(FRAME, ""), message.timestamp);
   } else if (message.role === "assistant") {

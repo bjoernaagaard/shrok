@@ -806,7 +806,6 @@ export const createBrowserTools = (
       }),
     },
     {
-      holdsPage: true,
       phrase: "clicking on the page",
       tool: defineTool({
         description:
@@ -855,6 +854,7 @@ export const createBrowserTools = (
                 grants: [
                   `pressing buttons that book, buy, pay, sign up or send on ${site}`,
                 ],
+                holdsPage: true,
                 run: async () => {
                   const now = await session.page();
                   const approved = await find(now, args.ref);
@@ -884,7 +884,6 @@ export const createBrowserTools = (
       }),
     },
     {
-      holdsPage: true,
       phrase: "typing on the page",
       tool: defineTool({
         description:
@@ -912,6 +911,7 @@ export const createBrowserTools = (
               return {
                 arguments: { ...args },
                 grants: [`typing into pages on ${host}`],
+                holdsPage: true,
                 run: async () => {
                   const now = await session.page();
                   const approvedField = await find(now, args.ref);

@@ -11,8 +11,6 @@ export interface ShrokTool {
   readonly describe?: (args: JsonObject) => string | undefined;
   /** For tools that cost money per call: how many calls, and how many characters of text arguments, one owner request may spend. */
   readonly paid?: { readonly calls: number; readonly chars?: number };
-  /** Whether its request acts on the page the browser has open, so the browser stays open while it waits. */
-  readonly holdsPage?: boolean;
   /** Whether the flows prompt lists it as a tool flow scripts should call. Every call still passes the guard. */
   readonly flow?: boolean;
 }
@@ -63,15 +61,6 @@ export class ToolCatalog {
         : undefined;
 
     return described ?? entry?.phrase ?? `using ${name.replaceAll("_", " ")}`;
-  }
-
-  /** The tools whose requests act on the browser's open page. */
-  pageTools(): ReadonlySet<string> {
-    return new Set(
-      [...this.#tools.values()].flatMap((entry) =>
-        "tool" in entry && entry.holdsPage === true ? [entry.tool.name] : []
-      )
-    );
   }
 
   /** The tools a flow may call, by name. */

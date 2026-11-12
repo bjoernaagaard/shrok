@@ -12,7 +12,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import type { Approvals } from "./approvals/approvals.ts";
 import { createCodemode } from "./codemode.ts";
 import { ask } from "./conversation.ts";
-import type { From } from "./conversation.ts";
+import type { Answer, From } from "./conversation.ts";
 import { createFlows } from "./flows.ts";
 import { Items } from "./items.ts";
 import type { Layout } from "./layout.ts";
@@ -105,7 +105,7 @@ export const openBrain = async (
     publicWeb,
     approvals,
     seenUrls,
-    () => approvals.waitingFor(catalog.pageTools())
+    () => approvals.holdsPage()
   );
 
   await browser.check();
@@ -215,7 +215,7 @@ export const openBrain = async (
   const submit = async (
     message: { text: string; requestId: string; at: Date; from: From },
     show?: ShowProgress
-  ): Promise<string> => {
+  ): Promise<Answer> => {
     let listened: Parameters<Partials["forget"]>[0] | undefined;
 
     const answered = await ask(
@@ -245,7 +245,7 @@ export const openBrain = async (
       }
     });
 
-    return answered.answered ? answered.text : unansweredText(answered.reason);
+    return answered;
   };
 
   const answer = async (
@@ -270,8 +270,12 @@ export const openBrain = async (
       show
     );
 
+    if (!answered.answered) {
+      return unansweredText(answered.reason);
+    }
+
     // An answer can end with a tool, such as send_file, and no words; the owner still gets a reply.
-    return answered === "" ? "Done." : answered;
+    return answered.text === "" ? "Done." : answered.text;
   };
 
   return {
@@ -291,8 +295,12 @@ export const openBrain = async (
       await stopSandbox();
       items.close();
     },
-    report: async (text, requestId, at) =>
-      await submit({ at, from: "event", requestId, text }),
+    // The owner never sent an event, so an event the model could not answer asks nothing of him.
+    report: async (text, requestId, at) => {
+      const answered = await submit({ at, from: "event", requestId, text });
+
+      return answered.answered ? answered.text : "";
+    },
     settled: async (requestId) => {
       const submission = await storage.submissionByRequest(
         root.id,
