@@ -11,8 +11,8 @@ This is a hard rule. It overrides any other testing advice in this file or elsew
 
 # Running Shrok
 
-- You may always restart the live Shrok under process-compose without asking: `mise run stop`, then `mise run start`. Its log is `data/shrok.log`.
-- Keep `OPENAI_API_KEY` and `OPENAI_BASE_URL` in Bitwarden. They are there to test the OpenAI Responses and Completions APIs next to Anthropic Messages.
+- You may always restart the Shrok of this checkout under process-compose without asking: `mise run stop`, then `mise run start`. Its log is `data/shrok.log`.
+- Shrok and its end-to-end tests read keys only from the environment or the sources the README lists. How a machine fills them is that machine's own setup, kept out of this repository. The tests of the OpenAI Responses and Completions APIs also need `OPENAI_API_KEY` and `OPENAI_BASE_URL`.
 
 # Ultracite Code Standards
 

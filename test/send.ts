@@ -15,7 +15,7 @@ import {
 /**
  * Asks Shrok to send an email and to run a gws command, checks that each waits for the owner's approval of
  * exactly what it would do, and answers no to both, so nothing is sent or run.
- *   bas env run .env.refs -- node test/send.ts
+ *   node test/send.ts, with Shrok's keys in the environment
  */
 
 const ASK_BUDGET_MS = 300_000;

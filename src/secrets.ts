@@ -77,19 +77,18 @@ const readSecret = (file: string, ownerOnly = false): string => {
   }
 };
 
-/** NAME from the file NAME_FILE names, as with Docker secrets, or from $CREDENTIALS_DIRECTORY/NAME, as systemd imports them. */
+/**
+ * NAME from the file NAME_FILE names, as with Docker secrets, or from $CREDENTIALS_DIRECTORY/NAME, as systemd
+ * imports them, for each NAME the environment leaves unset.
+ */
 const loadFileSecrets = (): void => {
   const credentials = process.env.CREDENTIALS_DIRECTORY;
 
-  for (const name of SECRETS) {
+  for (const name of SECRETS.filter((secret) => !isSet(secret))) {
     const key = `${name}_FILE`;
     const named = process.env[key];
 
     if (named !== undefined && named !== "") {
-      if (isSet(name)) {
-        throw new Error(`Both ${name} and ${key} are set. Keep one of them.`);
-      }
-
       try {
         process.env[name] = readSecret(named).replace(TRAILING_NEWLINE, "");
       } catch (error) {
@@ -100,7 +99,7 @@ const loadFileSecrets = (): void => {
     } else if (credentials !== undefined && credentials !== "") {
       const imported = path.join(credentials, name);
 
-      if (!isSet(name) && existsSync(imported)) {
+      if (existsSync(imported)) {
         process.env[name] = readSecret(imported).replace(TRAILING_NEWLINE, "");
       }
     }
