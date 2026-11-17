@@ -1,0 +1,8 @@
+#:schema https://pitchfork.jdx.dev/schema.json
+
+[daemons.shrok]
+run = "exec node src/main.ts"
+mise = true
+ready_output = { pattern = "Shrok is ready", timeout = "5m" }
+retry = 5
+stop_signal = { signal = "SIGTERM", timeout = "30s" }
